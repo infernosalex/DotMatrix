@@ -711,6 +711,10 @@ def main():
 
     print(f"Selected mask pattern: {qr.mask}")
 
+    # Print QR code
+    # print(qr.modules)
+
+    # Show QR code after masking
     qr.draw()
 
 if __name__ == "__main__":
