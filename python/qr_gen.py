@@ -16,7 +16,7 @@ class QRCode:
 
     ecc_h = [9, 16, 26, 36, 46, 60, 66, 86, 100, 122, 140, 158, 180, 197, 223, 253, 283, 313, 341, 385, 406, 442, 464, 514, 538, 596, 628, 661, 701, 745, 793, 845, 901, 961, 986, 1054, 1096, 1142, 1222, 1276]
 
-    # Block structure tables for versions 1-10 (version, error correction): (num_blocks_g1, words_per_block_g1, num_blocks_g2, words_per_block_g2)
+    # Block structure tables for versions 1-40 (version, error correction): (num_blocks_g1, words_per_block_g1, num_blocks_g2, words_per_block_g2)
     BLOCK_STRUCTURE = {
         (1, 'L'): (1, 19, 0, 0),
         (1, 'M'): (1, 16, 0, 0),
@@ -37,7 +37,27 @@ class QRCode:
         (5, 'L'): (1, 108, 0, 0),
         (5, 'M'): (2, 43, 0, 0),
         (5, 'Q'): (2, 15, 2, 16),
-        (5, 'H'): (2, 11, 2, 12)
+        (5, 'H'): (2, 11, 2, 12),
+        (6, 'L'): (1, 136, 0, 0),
+        (6, 'M'): (2, 58, 0, 0),
+        (6, 'Q'): (4, 20, 0, 0),
+        (6, 'H'): (4, 11, 0, 0),
+        (7, 'L'): (1, 156, 0, 0),
+        (7, 'M'): (2, 64, 0, 0),
+        (7, 'Q'): (3, 26, 0, 0),
+        (7, 'H'): (3, 14, 0, 0),
+        (8, 'L'): (1, 194, 0, 0),
+        (8, 'M'): (2, 78, 0, 0),
+        (8, 'Q'): (4, 24, 0, 0),
+        (8, 'H'): (4, 12, 0, 0),
+        (9, 'L'): (1, 232, 0, 0),
+        (9, 'M'): (2, 90, 0, 0),
+        (9, 'Q'): (4, 28, 0, 0),
+        (9, 'H'): (4, 15, 0, 0),
+        (10, 'L'): (1, 274, 0, 0),
+        (10, 'M'): (2, 106, 0, 0),
+        (10, 'Q'): (4, 32, 0, 0),
+        (10, 'H'): (4, 18, 0, 0)
     }
 
     # Static alignment pattern positions for each version
@@ -54,25 +74,29 @@ class QRCode:
         10: [6, 28, 50]
     }
 
-
-    def __init__(self, data, version=1, error_correction='L', mask=0) -> None:
+    def __init__(self, data, version=-1, error_correction='L', mask=0) -> None:
         self.data = data
-        self.version = version
-        self.size = 17 + 4 * self.version
         self.error_correction = error_correction
-        self.mask = mask    
+        self.mask = mask
 
-        self.modules = np.zeros((self.size, self.size), dtype=int)
-        self.isfunction = np.zeros((self.size, self.size), dtype=bool)
-
-        if not self.MIN_VERSION <= self.version <= self.MAX_VERSION:
-            raise ValueError(f'Version must be between {self.MIN_VERSION} and {self.MAX_VERSION}')
-        
+        # Validate error correction level
         if self.error_correction not in ['L', 'M', 'Q', 'H']:
             raise ValueError('Error correction must be L, M, Q or H')
         
         if not -1 <= self.mask <= 7:
             raise ValueError('Mask must be between 0 and 7')
+
+        # Auto-select version if -1
+        if version == -1:
+            self.version = self._select_version()
+        else:
+            self.version = version
+            if not self.MIN_VERSION <= self.version <= self.MAX_VERSION:
+                raise ValueError(f'Version must be between {self.MIN_VERSION} and {self.MAX_VERSION}')
+
+        self.size = 17 + 4 * self.version
+        self.modules = np.zeros((self.size, self.size), dtype=int)
+        self.isfunction = np.zeros((self.size, self.size), dtype=bool)
 
         # Add all function patterns first
         self._add_temporary_format_bits()
@@ -89,8 +113,6 @@ class QRCode:
         else:
             self._apply_mask(mask)
             self._draw_format_bits(self.mask)  # Draw final format bits
-
-
 
     def _add_timing_patterns(self):
         """Add the timing pattern - alternating dark/light modules"""
@@ -180,8 +202,6 @@ class QRCode:
         self.modules[self.size - 8, 8] = 1
         self.isfunction[self.size - 8, 8] = True
 
-        
-
     def _place_data_bits(self, data_bits):
         """Place data bits in zigzag pattern from bottom right"""
         # Convert binary string to bytes for easier bit access
@@ -218,9 +238,6 @@ class QRCode:
                         bit_idx += 1
                         
         # Any remaining modules should stay as initialized (white/0)
-
-   
-
     # Method to get parameters for QR code
     def get_version(self) -> int:
         return self.version
@@ -228,7 +245,7 @@ class QRCode:
     def get_size(self) -> int:
         return self.size
     
-    def get_error_correction(self) :
+    def get_error_correction(self) -> str:
         return self.error_correction
     
     def get_mask(self) -> int:
@@ -274,22 +291,13 @@ class QRCode:
         
         num_blocks_g1, words_per_block_g1, num_blocks_g2, words_per_block_g2 = block_structure
         
-        # Split data into blocks
-        blocks = []
+        # Print debug information
+        print("\nBlock Structure:")
+        print(f"Number of blocks in group 1: {num_blocks_g1}")
+        print(f"Words per block in group 1: {words_per_block_g1}")
+        print(f"Number of blocks in group 2: {num_blocks_g2}")
+        print(f"Words per block in group 2: {words_per_block_g2}")
         
-        # Group 1 blocks
-        pos = 0
-        for _ in range(num_blocks_g1):
-            block = data_bytes[pos:pos + words_per_block_g1]
-            blocks.append(block)
-            pos += words_per_block_g1
-            
-        # Group 2 blocks (if any)
-        for _ in range(num_blocks_g2):
-            block = data_bytes[pos:pos + words_per_block_g2]
-            blocks.append(block)
-            pos += words_per_block_g2
-            
         # Get ECC word count based on version and level
         ecc_words = {
             'L': [7,10,15,20,26,18,20,24,30,18,20,24,26,30,22,24,28,30,28,28,28,28,30,30,26,28,30,30,30,30,30,30,30,30,30,30,30,30,30],
@@ -297,30 +305,53 @@ class QRCode:
             'Q': [13,22,18,26,18,24,18,22,20,24,28,26,24,20,30,24,28,28,26,30,28,30,30,30,30,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30], 
             'H': [17,28,22,16,22,28,26,26,24,28,24,28,22,24,24,30,28,28,26,28,30,24,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30]
         }[self.error_correction][self.version - 1]
+        print(f"ECC words per block: {ecc_words}")
+
+        # Split data into blocks
+        blocks = []
+        pos = 0
+        
+        # Group 1 blocks
+        for _ in range(num_blocks_g1):
+            block = list(data_bytes[pos:pos + words_per_block_g1])
+            blocks.append(block)
+            pos += words_per_block_g1
+            
+        # Group 2 blocks (if any)
+        for _ in range(num_blocks_g2):
+            block = list(data_bytes[pos:pos + words_per_block_g2])
+            blocks.append(block)
+            pos += words_per_block_g2
 
         # Generate ECC for each block
         rs = ReedSolomon()
         ecc_blocks = []
-        for block in blocks:
-            ecc = rs.generate_ecc(block, ecc_words)
+        for i, block in enumerate(blocks):
+            ecc = list(rs.generate_ecc(bytes(block), ecc_words))
             ecc_blocks.append(ecc)
-            
-        # Interleave data blocks
+            print(f"\nBlock {i} data:", ' '.join(f'{b:02X}' for b in block))
+            print(f"Block {i} ECC:", ' '.join(f'{b:02X}' for b in ecc))
+
+        # Interleave data codewords
         final_data = bytearray()
-        max_words = max(words_per_block_g1, words_per_block_g2 if words_per_block_g2 else 0)
+        max_data_words = max(words_per_block_g1, words_per_block_g2 if words_per_block_g2 else 0)
         
-        for i in range(max_words):
+        # Interleave data codewords
+        for i in range(max_data_words):
             for block in blocks:
                 if i < len(block):
                     final_data.append(block[i])
-                    
-        # Interleave error correction blocks
+
+        # Interleave error correction codewords
         for i in range(ecc_words):
             for ecc_block in ecc_blocks:
                 final_data.append(ecc_block[i])
-                
-        # Convert back to binary string
-        return data + ''.join(f'{b:08b}' for b in final_data[len(data_bytes):])
+
+        print("\nFinal interleaved sequence:", ' '.join(f'{b:02X}' for b in final_data))
+        
+        # Convert the entire final sequence to binary string
+        final_bits = ''.join(f'{b:08b}' for b in final_data)
+        return final_bits
 
     def create_data_segment(self, mode) -> str:    
         # Mode constants
@@ -353,6 +384,10 @@ class QRCode:
         # Check if data fits within capacity
         if ( total_capacity // 8 ) < len(self.data):
             raise ValueError(f'Data length exceeds maximum capacity of {total_capacity // 8} bytes for version {self.version} and error correction level {self.error_correction}')
+
+        # Check if version correct
+        if self.version < 1 or self.version > 40:
+            raise ValueError(f'Version must be between 1 and 40')
 
         # Convert data to binary
         binary_data = ''
@@ -550,7 +585,7 @@ class QRCode:
         plt.margins(0,0)
         plt.gca().xaxis.set_major_locator(plt.NullLocator())
         plt.gca().yaxis.set_major_locator(plt.NullLocator())
-        plt.title(f'QR Code After Masking (Mask Pattern {self.mask})')
+        plt.title(f'QR Code (Mask Pattern: {self.mask} Version: {self.version} ECC: {self.error_correction})')
         plt.show()
 
     def _draw_format_bits(self, mask: int) -> None:
@@ -604,6 +639,29 @@ class QRCode:
         self.modules[self.size - 8, 8] = 1
         self.isfunction[self.size - 8, 8] = True
 
+    def _select_version(self) -> int:
+        """Select the smallest version that can hold the data with the given error correction level."""
+        # Get capacity array based on error correction level
+        capacity_lookup = {
+            'L': self.ecc_l,
+            'M': self.ecc_m,
+            'Q': self.ecc_q,
+            'H': self.ecc_h
+        }
+        capacities = capacity_lookup[self.error_correction]
+
+        # Calculate required capacity in bytes
+        # For byte mode: mode indicator (4 bits) + character count indicator (8 bits) + data (8 bits per char)
+        required_bits = 4 + 8 + (len(self.data) * 8)
+        required_bytes = (required_bits + 7) // 8  # Round up to nearest byte
+
+        # Find the smallest version that can hold the data
+        for version in range(1, self.MAX_VERSION + 1):
+            if capacities[version - 1] >= required_bytes:
+                return version
+
+        raise ValueError(f'Data too large to fit in any QR code version with {self.error_correction} error correction')
+
 class ReedSolomon:
     def __init__(self):
         # GF(256) primitive polynomial x^8 + x^4 + x^3 + x^2 + 1
@@ -649,13 +707,10 @@ class ReedSolomon:
 
 def main():
     text = 'https://cs.unibuc.ro/~crusu/asc/'
-    qr = QRCode(text, version=3, error_correction='L', mask=-1)
+    qr = QRCode(text, version=-1, error_correction='Q', mask=-1)
 
-    # Select and apply best mask
-    #best_mask = qr.select_mask()
     print(f"Selected mask pattern: {qr.mask}")
 
-    # Show QR code after masking
     qr.draw()
 
 if __name__ == "__main__":
