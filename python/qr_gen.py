@@ -55,24 +55,29 @@ class QRCode:
     }
 
 
-    def __init__(self, data, version=1, error_correction='L', mask=0) -> None:
+    def __init__(self, data, version=-1, error_correction='L', mask=0) -> None:
         self.data = data
-        self.version = version
-        self.size = 17 + 4 * self.version
         self.error_correction = error_correction
-        self.mask = mask    
+        self.mask = mask
 
-        self.modules = np.zeros((self.size, self.size), dtype=int)
-        self.isfunction = np.zeros((self.size, self.size), dtype=bool)
-
-        if not self.MIN_VERSION <= self.version <= self.MAX_VERSION:
-            raise ValueError(f'Version must be between {self.MIN_VERSION} and {self.MAX_VERSION}')
-        
+        # Validate error correction level
         if self.error_correction not in ['L', 'M', 'Q', 'H']:
             raise ValueError('Error correction must be L, M, Q or H')
         
         if not -1 <= self.mask <= 7:
             raise ValueError('Mask must be between 0 and 7')
+
+        # Auto-select version if -1
+        if version == -1:
+            self.version = self._select_version()
+        else:
+            self.version = version
+            if not self.MIN_VERSION <= self.version <= self.MAX_VERSION:
+                raise ValueError(f'Version must be between {self.MIN_VERSION} and {self.MAX_VERSION}')
+
+        self.size = 17 + 4 * self.version
+        self.modules = np.zeros((self.size, self.size), dtype=int)
+        self.isfunction = np.zeros((self.size, self.size), dtype=bool)
 
         # Add all function patterns first
         self._add_temporary_format_bits()
@@ -89,8 +94,6 @@ class QRCode:
         else:
             self._apply_mask(mask)
             self._draw_format_bits(self.mask)  # Draw final format bits
-
-
 
     def _add_timing_patterns(self):
         """Add the timing pattern - alternating dark/light modules"""
@@ -354,6 +357,10 @@ class QRCode:
         if ( total_capacity // 8 ) < len(self.data):
             raise ValueError(f'Data length exceeds maximum capacity of {total_capacity // 8} bytes for version {self.version} and error correction level {self.error_correction}')
 
+        # Check if version correct
+        if self.version < 1 or self.version > 40:
+            raise ValueError(f'Version must be between 1 and 40')
+
         # Convert data to binary
         binary_data = ''
         for char in self.data:
@@ -550,7 +557,7 @@ class QRCode:
         plt.margins(0,0)
         plt.gca().xaxis.set_major_locator(plt.NullLocator())
         plt.gca().yaxis.set_major_locator(plt.NullLocator())
-        plt.title(f'QR Code After Masking (Mask Pattern {self.mask})')
+        plt.title(f'QR Code (Mask Pattern: {self.mask} Version: {self.version} ECC: {self.error_correction})')
         plt.show()
 
     def _draw_format_bits(self, mask: int) -> None:
@@ -604,6 +611,29 @@ class QRCode:
         self.modules[self.size - 8, 8] = 1
         self.isfunction[self.size - 8, 8] = True
 
+    def _select_version(self) -> int:
+        """Select the smallest version that can hold the data with the given error correction level."""
+        # Get capacity array based on error correction level
+        capacity_lookup = {
+            'L': self.ecc_l,
+            'M': self.ecc_m,
+            'Q': self.ecc_q,
+            'H': self.ecc_h
+        }
+        capacities = capacity_lookup[self.error_correction]
+
+        # Calculate required capacity in bytes
+        # For byte mode: mode indicator (4 bits) + character count indicator (8 bits) + data (8 bits per char)
+        required_bits = 4 + 8 + (len(self.data) * 8)
+        required_bytes = (required_bits + 7) // 8  # Round up to nearest byte
+
+        # Find the smallest version that can hold the data
+        for version in range(1, self.MAX_VERSION + 1):
+            if capacities[version - 1] >= required_bytes:
+                return version
+
+        raise ValueError(f'Data too large to fit in any QR code version with {self.error_correction} error correction')
+
 class ReedSolomon:
     def __init__(self):
         # GF(256) primitive polynomial x^8 + x^4 + x^3 + x^2 + 1
@@ -649,11 +679,14 @@ class ReedSolomon:
 
 def main():
     text = 'https://cs.unibuc.ro/~crusu/asc/'
-    qr = QRCode(text, version=3, error_correction='L', mask=-1)
+    qr = QRCode(text, version=-1, error_correction='L', mask=-1)
 
     # Select and apply best mask
     #best_mask = qr.select_mask()
     print(f"Selected mask pattern: {qr.mask}")
+
+    # Print QR code
+    # print(qr.modules)
 
     # Show QR code after masking
     qr.draw()
