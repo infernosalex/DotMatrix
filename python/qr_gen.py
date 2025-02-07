@@ -74,10 +74,11 @@ class QRCode:
         10: [6, 28, 50]
     }
 
-    def __init__(self, data, version=-1, error_correction='L', mask=0) -> None:
+    def __init__(self, data, version=-1, error_correction='L', mask=0, debug=False) -> None:
         self.data = data
         self.error_correction = error_correction
         self.mask = mask
+        self.debug = debug
 
         # Validate error correction level
         if self.error_correction not in ['L', 'M', 'Q', 'H']:
@@ -263,7 +264,8 @@ class QRCode:
             self._draw_format_bits(mask)  # Draw format bits for this mask
             score = self._get_penalty_score()
 
-            print(f'Mask {mask} score: {score}')
+            if self.debug:
+                print(f'Mask {mask} score: {score}')
             
             if score < min_score:
                 min_score = score
@@ -292,11 +294,12 @@ class QRCode:
         num_blocks_g1, words_per_block_g1, num_blocks_g2, words_per_block_g2 = block_structure
         
         # Print debug information
-        print("\nBlock Structure:")
-        print(f"Number of blocks in group 1: {num_blocks_g1}")
-        print(f"Words per block in group 1: {words_per_block_g1}")
-        print(f"Number of blocks in group 2: {num_blocks_g2}")
-        print(f"Words per block in group 2: {words_per_block_g2}")
+        if self.debug:
+            print("\nBlock Structure:")
+            print(f"Number of blocks in group 1: {num_blocks_g1}")
+            print(f"Words per block in group 1: {words_per_block_g1}")
+            print(f"Number of blocks in group 2: {num_blocks_g2}")
+            print(f"Words per block in group 2: {words_per_block_g2}")
         
         # Get ECC word count based on version and level
         ecc_words = {
@@ -305,7 +308,8 @@ class QRCode:
             'Q': [13,22,18,26,18,24,18,22,20,24,28,26,24,20,30,24,28,28,26,30,28,30,30,30,30,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30], 
             'H': [17,28,22,16,22,28,26,26,24,28,24,28,22,24,24,30,28,28,26,28,30,24,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30]
         }[self.error_correction][self.version - 1]
-        print(f"ECC words per block: {ecc_words}")
+        if self.debug:
+            print(f"ECC words per block: {ecc_words}")
 
         # Split data into blocks
         blocks = []
@@ -329,8 +333,9 @@ class QRCode:
         for i, block in enumerate(blocks):
             ecc = list(rs.generate_ecc(bytes(block), ecc_words))
             ecc_blocks.append(ecc)
-            print(f"\nBlock {i} data:", ' '.join(f'{b:02X}' for b in block))
-            print(f"Block {i} ECC:", ' '.join(f'{b:02X}' for b in ecc))
+            if self.debug:
+                print(f"\nBlock {i} data:", ' '.join(f'{b:02X}' for b in block))
+                print(f"Block {i} ECC:", ' '.join(f'{b:02X}' for b in ecc))
 
         # Interleave data codewords
         final_data = bytearray()
@@ -347,7 +352,8 @@ class QRCode:
             for ecc_block in ecc_blocks:
                 final_data.append(ecc_block[i])
 
-        print("\nFinal interleaved sequence:", ' '.join(f'{b:02X}' for b in final_data))
+        if self.debug:
+            print("\nFinal interleaved sequence:", ' '.join(f'{b:02X}' for b in final_data))
         
         # Convert the entire final sequence to binary string
         final_bits = ''.join(f'{b:08b}' for b in final_data)
@@ -359,7 +365,8 @@ class QRCode:
         if mode not in MODES:
             raise ValueError('Mode must be numeric, alphanumeric, byte or kanji')
         
-        print("\n=== QR Code Generation Debug ===")
+        if self.debug:
+            print("\n=== QR Code Generation Debug ===")
         
         # Mode indicator
         mode_indicator = {
@@ -368,7 +375,8 @@ class QRCode:
             'byte': '0100',
             'kanji': '1000'
         }
-        print(f"Mode: {mode} (indicator: {mode_indicator[mode]})")
+        if self.debug:
+            print(f"Mode: {mode} (indicator: {mode_indicator[mode]})")
 
         # Get capacity based on version and ECC level
         capacity_lookup = {
@@ -379,7 +387,8 @@ class QRCode:
         }
 
         total_capacity = capacity_lookup[self.error_correction][self.version - 1] * 8
-        print(f"Total capacity: {total_capacity} bits")
+        if self.debug:
+            print(f"Total capacity: {total_capacity} bits")
 
         # Check if data fits within capacity
         if ( total_capacity // 8 ) < len(self.data):
@@ -393,28 +402,33 @@ class QRCode:
         binary_data = ''
         for char in self.data:
             binary_data += f'{ord(char):08b}'
-        print(f"Data length: {len(self.data)} bytes")
-        print(f"Binary data: {binary_data}")
+        if self.debug:
+            print(f"Data length: {len(self.data)} bytes")
+            print(f"Binary data: {binary_data}")
 
         char_count_bits = 8  # Default for byte mode
         bytes_count = bin(len(self.data))[2:].zfill(char_count_bits)
-        print(f"Character count indicator ({char_count_bits} bits): {bytes_count}")
+        if self.debug:
+            print(f"Character count indicator ({char_count_bits} bits): {bytes_count}")
 
         # Add mode indicator, character count, and data bits
         data_bits = mode_indicator[mode] + bytes_count + binary_data
-        print(f"\nInitial data bits: {data_bits}")
-        print(f"Initial data length: {len(data_bits)} bits")
+        if self.debug:
+            print(f"\nInitial data bits: {data_bits}")
+            print(f"Initial data length: {len(data_bits)} bits")
         
         # Add terminator
         remaining = total_capacity - len(data_bits)
         terminator = '0000'[:min(4, remaining)]
-        print(f"\nAdding terminator: {terminator}")
+        if self.debug:
+            print(f"\nAdding terminator: {terminator}")
         
         # Add bit padding to byte boundary
         remaining -= len(terminator)
         bits_to_boundary = (8 - ((len(data_bits) + len(terminator)) % 8)) % 8
         bit_padding = '0' * min(bits_to_boundary, remaining)
-        print(f"Adding bit padding: {bit_padding}")
+        if self.debug:
+            print(f"Adding bit padding: {bit_padding}")
         
         # Add byte padding until capacity reached
         remaining -= len(bit_padding)
@@ -423,18 +437,21 @@ class QRCode:
         while remaining >= 8:
             byte_padding += '11101100' if len(byte_padding)//8 % 2 == 0 else '00010001'
             remaining -= 8
-        print(f"Adding byte padding: {byte_padding}")
+        if self.debug:
+            print(f"Adding byte padding: {byte_padding}")
         
         # Segments are concatenated together, without Reed-Solomon error correction
         segment = data_bits + terminator + bit_padding + byte_padding
-        print(f"\nFinal data segment (before error correction): {segment}")
-        print(f"Final segment length: {len(segment)} bits")
+        if self.debug:
+            print(f"\nFinal data segment (before error correction): {segment}")
+            print(f"Final segment length: {len(segment)} bits")
         
         # Add error correction
         segment = self.add_error_correction(segment)
-        print(f"\nFinal data segment (after error correction): {segment}")
-        print(f"Final segment length with error correction: {len(segment)} bits")
-        print("=== End QR Code Generation Debug ===\n")
+        if self.debug:
+            print(f"\nFinal data segment (after error correction): {segment}")
+            print(f"Final segment length with error correction: {len(segment)} bits")
+            print("=== End QR Code Generation Debug ===\n")
         
         return segment
 
@@ -707,14 +724,14 @@ class ReedSolomon:
 
 def main():
     text = 'https://cs.unibuc.ro/~crusu/asc/'
-    qr = QRCode(text, version=-1, error_correction='Q', mask=-1)
-
-    print(f"Selected mask pattern: {qr.mask}")
-
-    # Print QR code
-    # print(qr.modules)
-
-    # Show QR code after masking
+    
+    # Create QR code with debug output
+    #print("\nGenerating QR code with debug output:")
+    #qr_debug = QRCode(text, version=-1, error_correction='Q', mask=-1, debug=True)
+    #qr_debug.draw()
+    
+    # Create QR code without debug output
+    qr = QRCode(text, version=-1, error_correction='Q', mask=-1, debug=False)
     qr.draw()
 
 if __name__ == "__main__":
