@@ -74,11 +74,12 @@ class QRCode:
         10: [6, 28, 50]
     }
 
-    def __init__(self, data, version=-1, error_correction='L', mask=0, debug=False) -> None:
+    def __init__(self, data, version=-1, error_correction='L', mask=0, debug=False, mode='byte') -> None:
         self.data = data
         self.error_correction = error_correction
         self.mask = mask
         self.debug = debug
+        self.mode = mode
 
         # Validate error correction level
         if self.error_correction not in ['L', 'M', 'Q', 'H']:
@@ -106,7 +107,8 @@ class QRCode:
         self._add_alignment_patterns()
 
         # Create and place data
-        data_bits = self.create_data_segment('byte')
+        data_bits = self.create_data_segment(self.mode)
+        data_bits = self.add_error_correction(data_bits)  # Add error correction after segmentation
         self._place_data_bits(data_bits)
         
         if mask == -1:
@@ -359,24 +361,15 @@ class QRCode:
         final_bits = ''.join(f'{b:08b}' for b in final_data)
         return final_bits
 
-    def create_data_segment(self, mode) -> str:    
+    def create_data_segment(self, mode) -> str:
+        """Create the data segment with mode indicator and character count"""
         # Mode constants
-        MODES = ['numeric', 'alphanumeric', 'byte', 'kanji']
+        MODES = ['numeric', 'alphanumeric', 'byte', 'kanji', 'auto']
         if mode not in MODES:
-            raise ValueError('Mode must be numeric, alphanumeric, byte or kanji')
+            raise ValueError('Mode must be numeric, alphanumeric, byte, kanji or auto')
         
         if self.debug:
             print("\n=== QR Code Generation Debug ===")
-        
-        # Mode indicator
-        mode_indicator = {
-            'numeric': '0001',
-            'alphanumeric': '0010',
-            'byte': '0100',
-            'kanji': '1000'
-        }
-        if self.debug:
-            print(f"Mode: {mode} (indicator: {mode_indicator[mode]})")
 
         # Get capacity based on version and ECC level
         capacity_lookup = {
@@ -390,33 +383,100 @@ class QRCode:
         if self.debug:
             print(f"Total capacity: {total_capacity} bits")
 
-        # Check if data fits within capacity
-        if ( total_capacity // 8 ) < len(self.data):
-            raise ValueError(f'Data length exceeds maximum capacity of {total_capacity // 8} bytes for version {self.version} and error correction level {self.error_correction}')
+        # If auto mode is selected, use the segmentation algorithm
+        if mode == 'auto':
+            from tokens import optimize_segments, Mode as QRMode
+            segments = optimize_segments(self.data, self.version)
+            
+            # Convert segments to bit string
+            data_bits = ""
+            
+            for segment in segments:
+                # Add mode indicator (4 bits)
+                if segment.mode == QRMode.NUMERIC:
+                    data_bits += "0001"  # Numeric mode
+                    count_bits = format(len(segment.data), f'0{self.get_mode_bits(QRMode.NUMERIC, self.version)}b')
+                    data_bits += count_bits
+                    # Process 3 digits at a time
+                    data = segment.data
+                    for i in range(0, len(data), 3):
+                        chunk = data[i:i+3]
+                        value = int(chunk)
+                        if len(chunk) == 3:
+                            data_bits += format(value, '010b')  # 10 bits for 3 digits
+                        elif len(chunk) == 2:
+                            data_bits += format(value, '07b')   # 7 bits for 2 digits
+                        else:
+                            data_bits += format(value, '04b')   # 4 bits for 1 digit
+                
+                elif segment.mode == QRMode.ALPHANUMERIC:
+                    data_bits += "0010"  # Alphanumeric mode
+                    count_bits = format(len(segment.data), f'0{self.get_mode_bits(QRMode.ALPHANUMERIC, self.version)}b')
+                    data_bits += count_bits
+                    # Process 2 characters at a time
+                    data = segment.data
+                    for i in range(0, len(data), 2):
+                        if i + 1 < len(data):
+                            char1 = self._alphanumeric_value(data[i])
+                            char2 = self._alphanumeric_value(data[i + 1])
+                            value = char1 * 45 + char2
+                            data_bits += format(value, '011b')  # 11 bits for 2 chars
+                        else:
+                            char1 = self._alphanumeric_value(data[i])
+                            data_bits += format(char1, '06b')   # 6 bits for 1 char
+                
+                elif segment.mode == QRMode.BYTE:
+                    data_bits += "0100"  # Byte mode
+                    count_bits = format(len(segment.data), f'0{self.get_mode_bits(QRMode.BYTE, self.version)}b')
+                    data_bits += count_bits
+                    for char in segment.data:
+                        data_bits += format(ord(char), '08b')
+                
+                elif segment.mode == QRMode.KANJI:
+                    data_bits += "1000"  # Kanji mode
+                    count_bits = format(len(segment.data), f'0{self.get_mode_bits(QRMode.KANJI, self.version)}b')
+                    data_bits += count_bits
+                    for char in segment.data:
+                        value = ord(char)
+                        data_bits += format(value, '013b')
 
-        # Check if version correct
-        if self.version < 1 or self.version > 40:
-            raise ValueError(f'Version must be between 1 and 40')
+            if self.debug:
+                print(f"Data bits from segmentation: {data_bits}")
+                print(f"Data length: {len(data_bits)} bits")
+        else:
+            # Use original single-mode encoding
+            mode_indicator = {
+                'numeric': '0001',
+                'alphanumeric': '0010',
+                'byte': '0100',
+                'kanji': '1000'
+            }
+            if self.debug:
+                print(f"Mode: {mode} (indicator: {mode_indicator[mode]})")
 
-        # Convert data to binary
-        binary_data = ''
-        for char in self.data:
-            binary_data += f'{ord(char):08b}'
-        if self.debug:
-            print(f"Data length: {len(self.data)} bytes")
-            print(f"Binary data: {binary_data}")
+            # Check if data fits within capacity
+            if (total_capacity // 8) < len(self.data):
+                raise ValueError(f'Data length exceeds maximum capacity of {total_capacity // 8} bytes for version {self.version} and error correction level {self.error_correction}')
 
-        char_count_bits = 8  # Default for byte mode
-        bytes_count = bin(len(self.data))[2:].zfill(char_count_bits)
-        if self.debug:
-            print(f"Character count indicator ({char_count_bits} bits): {bytes_count}")
+            # Convert data to binary
+            binary_data = ''
+            for char in self.data:
+                binary_data += f'{ord(char):08b}'
+            if self.debug:
+                print(f"Data length: {len(self.data)} bytes")
+                print(f"Binary data: {binary_data}")
 
-        # Add mode indicator, character count, and data bits
-        data_bits = mode_indicator[mode] + bytes_count + binary_data
-        if self.debug:
-            print(f"\nInitial data bits: {data_bits}")
-            print(f"Initial data length: {len(data_bits)} bits")
-        
+            char_count_bits = 8  # Default for byte mode
+            bytes_count = bin(len(self.data))[2:].zfill(char_count_bits)
+            if self.debug:
+                print(f"Character count indicator ({char_count_bits} bits): {bytes_count}")
+
+            # Add mode indicator, character count, and data bits
+            data_bits = mode_indicator[mode] + bytes_count + binary_data
+            if self.debug:
+                print(f"\nInitial data bits: {data_bits}")
+                print(f"Initial data length: {len(data_bits)} bits")
+
         # Add terminator
         remaining = total_capacity - len(data_bits)
         terminator = '0000'[:min(4, remaining)]
@@ -446,14 +506,45 @@ class QRCode:
             print(f"\nFinal data segment (before error correction): {segment}")
             print(f"Final segment length: {len(segment)} bits")
         
-        # Add error correction
-        segment = self.add_error_correction(segment)
-        if self.debug:
-            print(f"\nFinal data segment (after error correction): {segment}")
-            print(f"Final segment length with error correction: {len(segment)} bits")
-            print("=== End QR Code Generation Debug ===\n")
-        
         return segment
+
+    def _alphanumeric_value(self, char: str) -> int:
+        """Convert alphanumeric character to its value"""
+        if char.isdigit():
+            return int(char)
+        elif char.isupper():
+            return ord(char) - ord('A') + 10
+        elif char == ' ':
+            return 36
+        elif char == '$':
+            return 37
+        elif char == '%':
+            return 38
+        elif char == '*':
+            return 39
+        elif char == '+':
+            return 40
+        elif char == '-':
+            return 41
+        elif char == '.':
+            return 42
+        elif char == '/':
+            return 43
+        elif char == ':':
+            return 44
+        else:
+            raise ValueError(f"Invalid alphanumeric character: {char}")
+
+    def _get_data_codewords_count(self) -> int:
+        """Get the number of data codewords for current version and error correction level"""
+        if self.error_correction == 'L':
+            return self.ecc_l[self.version - 1]
+        elif self.error_correction == 'M':
+            return self.ecc_m[self.version - 1]
+        elif self.error_correction == 'Q':
+            return self.ecc_q[self.version - 1]
+        else:  # H
+            return self.ecc_h[self.version - 1]
 
     def draw(self, quiet_zone: int = 0) -> None:
         """
@@ -679,6 +770,33 @@ class QRCode:
 
         raise ValueError(f'Data too large to fit in any QR code version with {self.error_correction} error correction')
 
+    def get_mode_bits(self, mode, version: int) -> int:
+        """Get the number of character count bits for a given mode and version."""
+        from tokens import Mode as QRMode
+        
+        if version <= 9:
+            counts = {
+                QRMode.NUMERIC: 10,
+                QRMode.ALPHANUMERIC: 9,
+                QRMode.BYTE: 8,
+                QRMode.KANJI: 8
+            }
+        elif version <= 26:
+            counts = {
+                QRMode.NUMERIC: 12,
+                QRMode.ALPHANUMERIC: 11,
+                QRMode.BYTE: 16,
+                QRMode.KANJI: 10
+            }
+        else:  # version <= 40
+            counts = {
+                QRMode.NUMERIC: 14,
+                QRMode.ALPHANUMERIC: 13,
+                QRMode.BYTE: 16,
+                QRMode.KANJI: 12
+            }
+        return counts[mode]
+
 class ReedSolomon:
     def __init__(self):
         # GF(256) primitive polynomial x^8 + x^4 + x^3 + x^2 + 1
@@ -723,7 +841,7 @@ class ReedSolomon:
         return result
 
 def main():
-    text = 'https://cs.unibuc.ro/~crusu/asc/'
+    text = 'adrian123224beleaua.3322-'
     
     # Create QR code with debug output
     #print("\nGenerating QR code with debug output:")
