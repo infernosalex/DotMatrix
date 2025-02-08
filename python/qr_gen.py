@@ -8,7 +8,7 @@ class QRCode:
     MIN_VERSION = 1
     MAX_VERSION = 40
 
-    ecc_l = [19, 34, 55, 80, 108, 136, 156, 194, 232, 274, 324, 370, 428, 461, 523, 589, 647, 721, 795, 861, 932, 1006, 1094, 1174, 1276, 1370, 1468, 1531, 1631, 1735, 1843, 1955, 2071, 2191, 2306, 2434, 2566, 2702, 2812]
+    ecc_l = [19, 34, 55, 80, 108, 136, 156, 194, 232, 274, 324, 370, 428, 461, 523, 589, 647, 721, 795, 861, 932, 1006, 1094, 1174, 1276, 1370, 1468, 1531, 1631, 1735, 1843, 1955, 2071, 2191, 2306, 2434, 2566, 2702, 2812, 2956]
 
     ecc_m = [16, 28, 44, 64, 86, 108, 124, 154, 182, 216, 254, 290, 334, 365, 415, 453, 507, 563, 627, 669, 714, 782, 860, 914, 1000, 1062, 1128, 1193, 1267, 1373, 1455, 1541, 1631, 1725, 1812, 1914, 1992, 2102, 2216, 2334]
 
@@ -535,10 +535,10 @@ class QRCode:
         
         # Get ECC word count based on version and level
         ecc_words = {
-            'L': [7,10,15,20,26,18,20,24,30,18,20,24,26,30,22,24,28,30,28,28,28,28,30,30,26,28,30,30,30,30,30,30,30,30,30,30,30,30,30],
+            'L': [7,10,15,20,26,18,20,24,30,18,20,24,26,30,22,24,28,30,28,28,28,28,30,30,26,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30],
             'M': [10,16,26,18,24,16,18,22,22,26,30,22,22,24,24,28,28,26,26,26,26,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28,28],
-            'Q': [13,22,18,26,18,24,18,22,20,24,28,26,24,20,30,24,28,28,26,30,28,30,30,30,30,28,30,30,30,30,30,30,30,30,30,30,30,30,30], 
-            'H': [17,28,22,16,22,28,26,26,24,28,24,28,22,24,24,30,28,28,26,28,30,24,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30]
+            'Q': [13,22,18,26,18,24,18,22,20,24,28,26,24,20,30,24,28,28,26,30,28,30,30,30,30,28,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30],
+            'H': [17,28,22,16,22,28,26,26,24,28,24,28,22,24,24,30,28,28,26,28,30,24,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30,30]
         }[self.error_correction][self.version - 1]
         if self.debug:
             print(f"ECC words per block: {ecc_words}")
@@ -590,6 +590,38 @@ class QRCode:
         # Convert the entire final sequence to binary string
         final_bits = ''.join(f'{b:08b}' for b in final_data)
         return final_bits
+
+    def _encode_kanji(self, char: str) -> int:
+        """Convert a Kanji character to its QR code value"""
+        import unicodedata
+        
+        # First convert to NFKC form to handle composed characters
+        char = unicodedata.normalize('NFKC', char)
+        
+        try:
+            # Convert to Shift JIS bytes
+            sjis_bytes = char.encode('shift_jis')
+            if len(sjis_bytes) != 2:  # Kanji must be 2 bytes in Shift JIS
+                raise ValueError(f"Character {char} is not a valid Kanji character")
+            
+            # Get the Shift JIS value
+            value = (sjis_bytes[0] << 8) | sjis_bytes[1]
+            
+            # Convert to QR Kanji value
+            if 0x8140 <= value <= 0x9FFC:
+                value -= 0x8140
+            elif 0xE040 <= value <= 0xEBBF:
+                value -= 0xC140
+            else:
+                raise ValueError(f"Character {char} is not in valid Shift JIS range")
+            
+            # Convert to 13-bit value
+            msb = value >> 8
+            lsb = value & 0xFF
+            return (msb * 0xC0) + lsb
+            
+        except UnicodeEncodeError:
+            raise ValueError(f"Character {char} cannot be encoded in Shift JIS")
 
     def create_data_segment(self, mode) -> str:
         """Create the data segment with mode indicator and character count"""
@@ -659,16 +691,26 @@ class QRCode:
                     data_bits += "0100"  # Byte mode
                     count_bits = format(len(segment.data), f'0{self.get_mode_bits(QRMode.BYTE, self.version)}b')
                     data_bits += count_bits
-                    for char in segment.data:
-                        data_bits += format(ord(char), '08b')
+                    # UTF-8 encode the data
+                    utf8_bytes = segment.data.encode('utf-8')
+                    for b in utf8_bytes:
+                        data_bits += format(b, '08b')
                 
                 elif segment.mode == QRMode.KANJI:
                     data_bits += "1000"  # Kanji mode
                     count_bits = format(len(segment.data), f'0{self.get_mode_bits(QRMode.KANJI, self.version)}b')
                     data_bits += count_bits
                     for char in segment.data:
-                        value = ord(char)
-                        data_bits += format(value, '013b')
+                        try:
+                            value = self._encode_kanji(char)
+                            data_bits += format(value, '013b')
+                        except ValueError as e:
+                            if self.debug:
+                                print(f"Warning: {e}, falling back to UTF-8 encoding")
+                            # Fall back to byte mode for this character
+                            utf8_bytes = char.encode('utf-8')
+                            for b in utf8_bytes:
+                                data_bits += format(b, '08b')
 
             if self.debug:
                 print(f"Data bits from segmentation: {data_bits}")
@@ -698,12 +740,59 @@ class QRCode:
             }[mode]
             char_count_bits = self.get_mode_bits(mode_enum, self.version)
 
-            # Convert data to binary
+            # Convert data to binary based on mode
             binary_data = ''
-            for char in self.data:
-                binary_data += f'{ord(char):08b}'
+            if mode == 'numeric':
+                # Validate input is numeric
+                if not all(c.isdigit() for c in self.data):
+                    raise ValueError('Data contains non-numeric characters')
+                # Process 3 digits at a time
+                for i in range(0, len(self.data), 3):
+                    chunk = self.data[i:i+3]
+                    value = int(chunk)
+                    if len(chunk) == 3:
+                        binary_data += format(value, '010b')  # 10 bits for 3 digits
+                    elif len(chunk) == 2:
+                        binary_data += format(value, '07b')   # 7 bits for 2 digits
+                    else:
+                        binary_data += format(value, '04b')   # 4 bits for 1 digit
+            elif mode == 'alphanumeric':
+                # Validate input is alphanumeric
+                valid_chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:'
+                if not all(c in valid_chars for c in self.data.upper()):
+                    raise ValueError('Data contains invalid alphanumeric characters')
+                # Convert data to uppercase for processing
+                data = self.data.upper()
+                # Process 2 characters at a time
+                for i in range(0, len(data), 2):
+                    if i + 1 < len(data):
+                        char1 = self._alphanumeric_value(data[i])
+                        char2 = self._alphanumeric_value(data[i + 1])
+                        value = char1 * 45 + char2
+                        binary_data += format(value, '011b')  # 11 bits for 2 chars
+                    else:
+                        char1 = self._alphanumeric_value(data[i])
+                        binary_data += format(char1, '06b')   # 6 bits for 1 char
+            elif mode == 'kanji':
+                for char in self.data:
+                    try:
+                        value = self._encode_kanji(char)
+                        binary_data += format(value, '013b')
+                    except ValueError as e:
+                        if self.debug:
+                            print(f"Warning: {e}, falling back to UTF-8 encoding")
+                        # Fall back to byte mode for this character
+                        utf8_bytes = char.encode('utf-8')
+                        for b in utf8_bytes:
+                            binary_data += format(b, '08b')
+            else:
+                # UTF-8 encode the data for byte mode
+                utf8_bytes = self.data.encode('utf-8')
+                for b in utf8_bytes:
+                    binary_data += format(b, '08b')
+
             if self.debug:
-                print(f"Data length: {len(self.data)} bytes")
+                print(f"Data length: {len(self.data)} {'characters' if mode == 'kanji' else 'bytes'}")
                 print(f"Binary data: {binary_data}")
 
             bytes_count = format(len(self.data), f'0{char_count_bits}b')
@@ -831,7 +920,7 @@ class QRCode:
             lambda x, y: x % 3 == 0,                          # 010
             lambda x, y: (x + y) % 3 == 0,                    # 011
             lambda x, y: ((y // 2) + (x // 3)) % 2 == 0,      # 100
-            lambda x, y: ((x * y) % 2) + ((x * y) % 3) == 0,  # 101
+            lambda x, y: ((x * y) % 2 + (x * y) % 3) == 0,    # 101
             lambda x, y: (((x * y) % 2) + ((x * y) % 3)) % 2 == 0,  # 110
             lambda x, y: (((x + y) % 2) + ((x * y) % 3)) % 2 == 0,  # 111
         ]
@@ -1100,8 +1189,9 @@ class ReedSolomon:
 
 def main():
     text = '677861663com.acme35584af52fa3-88d0-093b-6c14-b37ddafb59c528908608sg.com.dash.www0530329356521790265903SG.COM.NETS46968696003522G366948304B2AE13344004SG.SGQR209710339366720B439682.6366768027829126902859SG8236HELLO FOO2517Singapore3272B815'
-
+    # text = "「魔法少女まどか☆マギカ」って"
     # text = 'Golden ratio = 1.61803398874983911374......'
+    #text = "01234567890"
 
     # Create QR code with debug output
     #print("\nGenerating QR code with debug output:")
@@ -1109,7 +1199,7 @@ def main():
     #qr_debug.draw()
     
     # Create QR code without debug output
-    qr = QRCode(text, version=-1, error_correction='L', mask=-1, debug=True, mode="auto")
+    qr = QRCode(text, version=-1, error_correction='L', mask=-1, debug=False, mode="auto")
     qr.draw()
 
 if __name__ == "__main__":
