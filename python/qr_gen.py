@@ -1,5 +1,6 @@
 # QR code generator from scratch
 
+from typing import Literal
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -302,7 +303,7 @@ class QRCode:
         40: 0b101000110001101001
     }
 
-    def __init__(self, data, version=-1, error_correction='L', mask=0, debug=False, mode='auto') -> None:
+    def __init__(self, data, version=-1, error_correction='L', mask=0, debug=False, mode: Literal['auto', 'numeric', 'alphanumeric', 'byte', 'kanji']='auto') -> None:
         self.data = data
         self.error_correction = error_correction
         self.mask = mask
@@ -908,8 +909,13 @@ class QRCode:
         # Show plot
         plt.show()
 
+    def get_matrix(self) -> list[list[int]]:
+        """Get the QR code matrix"""
+        return self.modules
+
     def _apply_mask(self, mask: int) -> None:
         """Apply the specified mask pattern to the QR code."""
+
         if not 0 <= mask <= 7:
             raise ValueError("Mask value out of range")
         
