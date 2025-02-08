@@ -33,11 +33,9 @@ def get_mode_bits(mode: Mode, version: int) -> int:
     return counts[mode]
 
 def get_empty_segment_bits(mode: Mode, version: int) -> int:
-    """Get the bit length of an empty segment for a given mode."""
-    return 4 + get_mode_bits(mode, version)  # 4 bits for mode indicator
+    return 4 + get_mode_bits(mode, version)
 
-def get_char_bit_length(mode: Mode, char: str) -> float:
-    """Get the bit length for encoding a single character in a given mode."""
+def get_char_bit_lenght(mode: Mode, char: str) -> float:
     if mode == Mode.NUMERIC:
         return 20/6  # ~3.33 bits per digit
     elif mode == Mode.ALPHANUMERIC:
@@ -49,6 +47,7 @@ def get_char_bit_length(mode: Mode, char: str) -> float:
     elif mode == Mode.KANJI:
         return 78/6  # 13 bits per character
     return float('inf')
+
 
 def can_encode_char(mode: Mode, char: str) -> bool:
     """Check if a character can be encoded in a given mode."""
@@ -72,47 +71,43 @@ def can_encode_char(mode: Mode, char: str) -> bool:
     return False
 
 def find_optimal_segmentation(text: str, version: int):
-    """Find the optimal segmentation for the given text and QR code version."""
     if not text:
         return [], 0
-        
+    
     n = len(text)
     modes = list(Mode)
-    
-    # Initialize f(i,m) table
+
     f = {(i, m): float('inf') for i in range(n + 1) for m in modes}
-    h = {(i, m): None for i in range(n + 1) for m in modes}
-    
-    # Base case: empty string
+    g = {(i, m): float('inf') for i in range(n + 1) for m in modes}
+    h = {(i, m): None for i in range( n + 1) for m in modes}
+
     for m in modes:
-        f[(0, m)] = 0  # Start with no bits used
-    
-    # Dynamic programming
-    for i in range(n):
-        # Try to extend existing segments
+        f[(0, m)] = 0
+        g[(0, m)] = get_char_bit_lenght(m, text[0]) if can_encode_char(m, text[0]) else float('inf')
+
+
+    for i in range(1,n+1):
         for curr_m in modes:
-            if can_encode_char(curr_m, text[i]):
-                char_bits = get_char_bit_length(curr_m, text[i])
-                
-                # Try all previous modes
+            if can_encode_char(curr_m, text[i-1]):
                 for prev_m in modes:
-                    if f[(i, prev_m)] == float('inf'):
+                    if g[(i-1, prev_m)] == float('inf'):
                         continue
-                        
-                    total_bits = f[(i, prev_m)]
-                    
-                    # If switching modes, add mode indicator and character count
-                    if prev_m != curr_m or i == 0:
-                        total_bits = math.ceil(total_bits)  # Round up previous segment
+
+                    total_bits = g[(i-1, prev_m)]
+
+                    if prev_m != curr_m:
+                        total_bits = math.ceil(total_bits)
                         total_bits += get_empty_segment_bits(curr_m, version)
-                    
-                    total_bits += char_bits
-                    
-                    if total_bits < f[(i + 1, curr_m)]:
-                        f[(i + 1, curr_m)] = total_bits
-                        h[(i + 1, curr_m)] = prev_m
-    
-    # Find optimal ending mode and bits
+
+                    # print(f"{i} & {curr_m}:  {total_bits} = g{g[(i-1, prev_m)]} for {prev_m} + {get_empty_segment_bits(curr_m, version)}  ,     {text[i-1]}")
+
+                    total_bits += get_char_bit_lenght(prev_m, text[i-1])
+
+                    if total_bits < f[(i, curr_m)]:
+                        f[(i, curr_m)] = total_bits
+                        h[(i, curr_m)] = prev_m
+            g[(i, curr_m)] = f[(i, curr_m)]
+
     best_bits = float('inf')
     best_mode = None
     
@@ -120,12 +115,14 @@ def find_optimal_segmentation(text: str, version: int):
         if f[(n, m)] < best_bits:
             best_bits = f[(n, m)]
             best_mode = m
+
+    # print(*f.items(), sep="\n\n")
     
     if best_bits == float('inf') or best_mode is None:
         raise ValueError("Unable to encode the input string with the given version")
     
     # Reconstruct optimal segmentation
-    optimal_modes = [None] * n
+    optimal_modes = [None] * (n+1)
     curr_mode = best_mode
     
     for i in range(n, 0, -1):
@@ -165,3 +162,9 @@ def optimize_segments(text: str, version: int) -> list[Segment]:
     """
     segments_data, total_bits = find_optimal_segmentation(text, version)
     return [Segment(seg['mode'], ''.join(seg['chars'])) for seg in segments_data]
+
+
+# print(*optimize_segments("67128177921547861663com.acme35584af52fa3-88d0-093b-6c14-b37ddafb59c528908608sg.com.dash.www0530329356521790265903SG.COM.NETS46968696003522G33250183309051017567088693441243693268766948304B2AE13344004SG.SGQR209710339366720B439682.63667470805057501195235502733744600368027857918629797829126902859SG8236HELLO FOO2517Singapore3272B815", 1))
+                        
+
+    
