@@ -1,300 +1,498 @@
 import numpy as np
-from qr_gen import ReedSolomon
+from qr_gen import QRCode
 
-class QRDecoder:
-    def __init__(self):
-        # Format information bits and their corresponding error correction levels and mask patterns
-        self.format_info_lookup = {
-            0b000000000000000: ('M', 0), 0b000010100110111: ('M', 1), 0b000101001101110: ('M', 2),
-            0b000111101011001: ('M', 3), 0b001000111101011: ('M', 4), 0b001010011011100: ('M', 5),
-            0b001101110000101: ('M', 6), 0b001111010110010: ('M', 7), 0b010001111010110: ('L', 0),
-            0b010011011100001: ('L', 1), 0b010100110111000: ('L', 2), 0b010110010001111: ('L', 3),
-            0b011001000111101: ('L', 4), 0b011011100001010: ('L', 5), 0b011100001010011: ('L', 6),
-            0b011110101100100: ('L', 7), 0b100001010011011: ('H', 0), 0b100011110101100: ('H', 1),
-            0b100100011110101: ('H', 2), 0b100110111000010: ('H', 3), 0b101001101110000: ('H', 4),
-            0b101011001000111: ('H', 5), 0b101100100011110: ('H', 6), 0b101110000101001: ('H', 7),
-            0b110000101001111: ('Q', 0), 0b110010001111000: ('Q', 1), 0b110101100100001: ('Q', 2),
-            0b110111000010110: ('Q', 3), 0b111000010100100: ('Q', 4), 0b111010110010011: ('Q', 5),
-            0b111101011001010: ('Q', 6), 0b111111111111101: ('Q', 7)
-        }
-        # Format information mask pattern
-        self.format_mask = 0b101010000010010
-        # Mode indicator bits
-        self.modes = {
-            '0001': 'numeric',
-            '0010': 'alphanumeric',
-            '0100': 'byte',
-            '1000': 'kanji'
-        }
-        # Character count indicator lengths for different versions and modes
-        self.char_count_bits = {
-            'numeric': {1: 10, 2: 10, 3: 10},
-            'alphanumeric': {1: 9, 2: 9, 3: 9},
-            'byte': {1: 8, 2: 8, 3: 8},
-            'kanji': {1: 8, 2: 8, 3: 8}
-        }
 
-    def get_format_info(self, matrix):
-        """Extract format information from the QR code matrix."""
-        print("\n=== QR Code Decoding Debug ===")
-        print("Step 1: Extracting Format Information")
-        
-        # Format info is stored in two locations
-        # Location 1: Around the top-left finder pattern
-        format_bits1 = []
-        for i in range(6):
-            format_bits1.append(matrix[8][i])  # Horizontal
-        format_bits1.append(matrix[8][7])
-        format_bits1.append(matrix[8][8])
-        format_bits1.append(matrix[7][8])
-        for i in range(5, -1, -1):
-            format_bits1.append(matrix[i][8])  # Vertical
+class QRDecode:
+    def __init__(self, qr_code: np.ndarray, debug: bool = False, verbose: bool = False) -> None:
+        self.matrix = qr_code
+        self.debug = debug
+        self.verbose = verbose
 
-        # Location 2: Around the other finder patterns
-        format_bits2 = []
-        for i in range(7):
-            format_bits2.append(matrix[matrix.shape[0]-1-i][8])  # Bottom-left vertical
-        for i in range(8):
-            format_bits2.append(matrix[8][matrix.shape[1]-8+i])  # Top-right horizontal
+        # Validate input matrix
+        if not qr_code.any() or any(len(row) != len(self.matrix) for row in self.matrix):
+            raise ValueError("Invalid QR code matrix")
 
-        # Convert bits to integer
-        format_int1 = int(''.join(['1' if bit else '0' for bit in format_bits1]), 2)
-        format_int2 = int(''.join(['1' if bit else '0' for bit in format_bits2]), 2)
-        
-        # XOR with mask pattern
-        format_int1 ^= self.format_mask
-        format_int2 ^= self.format_mask
-        
-        print(f"Format bits from location 1: {''.join(['1' if bit else '0' for bit in format_bits1])}")
-        print(f"Format bits from location 2: {''.join(['1' if bit else '0' for bit in format_bits2])}")
-        print(f"Format info after XOR 1: {bin(format_int1)[2:].zfill(15)}")
-        print(f"Format info after XOR 2: {bin(format_int2)[2:].zfill(15)}")
-        
-        # Look up the format information
-        if format_int1 in self.format_info_lookup:
-            ec_level, mask_pattern = self.format_info_lookup[format_int1]
-            print(f"Found format info: EC Level = {ec_level}, Mask Pattern = {mask_pattern}")
-            return ec_level, mask_pattern
-        elif format_int2 in self.format_info_lookup:
-            ec_level, mask_pattern = self.format_info_lookup[format_int2]
-            print(f"Found format info: EC Level = {ec_level}, Mask Pattern = {mask_pattern}")
-            return ec_level, mask_pattern
-        else:
-            raise ValueError("Could not decode format information")
+    def get_version(self) -> int:
+        """Get the QR code version based on matrix size."""
+        size = len(self.matrix)
+        version = (size - 17) // 4
+        if self.debug:
+            print(f"[DEBUG] get_version: Matrix size = {size}, computed version = {version}")
+            print(f"[DEBUG] get_version: Expected matrix size for this version = {17 + 4 * version}")
+        return version
 
-    def unmask_data(self, matrix, mask_pattern):
-        """Apply the mask pattern to unmask the data."""
-        print("\nStep 2: Unmasking Data")
-        print(f"Applying mask pattern {mask_pattern}")
+    def mark_function_modules(self) -> np.ndarray:
+        """Mark all function modules in the QR code."""
+        size = len(self.matrix)
+        function_modules = np.zeros((size, size), dtype=bool)
         
-        unmasked = matrix.copy()
-        rows, cols = matrix.shape
-        
-        for row in range(rows):
-            for col in range(cols):
-                # Skip the function patterns
-                if self.is_function_pattern(row, col, cols):
-                    continue
-                
-                # Apply the appropriate mask pattern
-                mask_value = False
-                if mask_pattern == 0:
-                    mask_value = (row + col) % 2 == 0
-                elif mask_pattern == 1:
-                    mask_value = row % 2 == 0
-                elif mask_pattern == 2:
-                    mask_value = col % 3 == 0
-                elif mask_pattern == 3:
-                    mask_value = (row + col) % 3 == 0
-                elif mask_pattern == 4:
-                    mask_value = (row // 2 + col // 3) % 2 == 0
-                elif mask_pattern == 5:
-                    mask_value = ((row * col) % 2) + ((row * col) % 3) == 0
-                elif mask_pattern == 6:
-                    mask_value = (((row * col) % 2) + ((row * col) % 3)) % 2 == 0
-                elif mask_pattern == 7:
-                    mask_value = (((row + col) % 2) + ((row * col) % 3)) % 2 == 0
-                
-                if mask_value:
-                    unmasked[row, col] = not matrix[row, col]
-        
-        print("Data unmasking complete")
-        return unmasked
+        # Compute version before using it
+        version = self.get_version()
 
-    def is_function_pattern(self, row, col, matrix_size):
-        """Check if a position contains a function pattern."""
-        # Finder patterns and their separators
-        if row < 9 and col < 9:  # Top-left finder
-            return True
-        if row < 9 and col > matrix_size-9:  # Top-right finder
-            return True
-        if row > matrix_size-9 and col < 9:  # Bottom-left finder
-            return True
-        
-        # Timing patterns
-        if row == 6 or col == 6:
-            return True
-        
-        # Alignment patterns for version 3
-        if matrix_size == 29:  # Version 3
-            alignment_centers = [22]  # Version 3 has one alignment pattern
-            for center in alignment_centers:
-                if abs(row - center) <= 2 and abs(col - center) <= 2:
-                    return True
-        
-        return False
-
-    def extract_data_bits(self, matrix):
-        """Extract the data bits from the matrix in the correct zigzag pattern."""
-        print("\nStep 3: Extracting Data Bits")
-        rows, cols = matrix.shape
-        data_bits = []
-        
-        # The zigzag pattern starts from the bottom right and moves upward
-        # We'll move in columns of two, from right to left
-        col = cols - 1
-        up = True  # Direction flag
-        
-        while col >= 0:
-            if col == 6:  # Skip timing pattern
-                col -= 1
-                continue
-                
-            # Process two columns at a time
-            for row in range(rows) if not up else range(rows-1, -1, -1):
-                # Process current column
-                if not self.is_function_pattern(row, col, cols):
-                    data_bits.append(matrix[row, col])
-                
-                # Process column - 1 if it exists
-                if col > 0 and not self.is_function_pattern(row, col-1, cols):
-                    data_bits.append(matrix[row, col-1])
+        # Helper function to add a finder pattern and its separator at given position
+        def add_finder_pattern(row, col):
+            # Add the 7x7 finder pattern
+            for r in range(7):
+                for c in range(7):
+                    if 0 <= row + r < size and 0 <= col + c < size:
+                        function_modules[row + r, col + c] = True
             
-            # Move to next column pair
+            # Add separator (white border)
+            # Mark the entire 8x8 region around the finder pattern
+            for r in range(-1, 8):
+                for c in range(-1, 8):
+                    if 0 <= row + r < size and 0 <= col + c < size:
+                        # Only mark if it's not part of the finder pattern itself
+                        if r < 0 or r >= 7 or c < 0 or c >= 7:
+                            function_modules[row + r, col + c] = True
+
+        # Add finder patterns at the three corners
+        add_finder_pattern(0, 0)        # Top-left
+        add_finder_pattern(0, size - 7)   # Top-right
+        add_finder_pattern(size - 7, 0)   # Bottom-left
+
+        # Add timing patterns
+        for i in range(size):
+            function_modules[6, i] = True  # Horizontal timing pattern
+            function_modules[i, 6] = True  # Vertical timing pattern
+
+        # Add format information areas
+        # Around top-left finder pattern
+        for i in range(9):
+            if i != 6:  # Skip timing pattern
+                function_modules[8, i] = True  # Horizontal format info
+                if i < 8:
+                    function_modules[i, 8] = True  # Vertical format info
+
+        # Around top-right finder pattern
+        for i in range(8):
+            function_modules[8, size - 1 - i] = True  # Horizontal format info
+
+        # Around bottom-left finder pattern
+        for i in range(8):
+            function_modules[size - 1 - i, 8] = True  # Vertical format info
+
+        # Dark module
+        function_modules[size - 8, 8] = True
+
+        # Mark alignment patterns for version >= 2
+        if version >= 2:
+            centers = self._get_alignment_pattern_centers()
+            for r in centers:
+                for c in centers:
+                    # Skip the finder pattern regions
+                    if (r, c) in [(6, 6), (6, size - 7), (size - 7, 6)]:
+                        continue
+                    for i in range(-2, 3):
+                        for j in range(-2, 3):
+                            if 0 <= r + i < size and 0 <= c + j < size:
+                                function_modules[r + i, c + j] = True
+
+        # Add version information areas for version >= 7
+        if version >= 7:
+            # Add version information below bottom-left finder pattern
+            for i in range(6):
+                for j in range(3):
+                    function_modules[size - 11 + j, i] = True  # Bottom-left version info
+                    function_modules[i, size - 11 + j] = True  # Top-right version info
+
+        if self.verbose:
+            print("[DEBUG] mark_function_modules: Function modules matrix:")
+            for i in range(size):
+                row = ""
+                for j in range(size):
+                    row += "██" if function_modules[i, j] else "  "
+                print(row)
+
+        return function_modules
+
+    def _get_alignment_pattern_centers(self) -> list:
+        """Return a list of alignment pattern center positions for the QR code.
+        Uses a lookup table for versions 2 to 10.
+        """
+        version = self.get_version()
+        if version == 1:
+            return []
+        lookup = {
+            2: [6, 18],
+            3: [6, 22],
+            4: [6, 26],
+            5: [6, 30],
+            6: [6, 34],
+            7: [6, 22, 38],
+            8: [6, 24, 42],
+            9: [6, 26, 46],
+            10: [6, 28, 50]
+        }
+        if version in lookup:
+            return lookup[version]
+        else:
+            end = len(self.matrix) - 7
+            count = (version // 7) + 2
+            if count == 2:
+                return [6, end]
+            step = (end - 6) // (count - 1)
+            centers = [6] + [6 + i * step for i in range(1, count - 1)] + [end]
+            return centers
+
+    def extract_format_information(self) -> tuple[str, int]:
+        """Extract format information from the QR code."""
+        
+        first_copy = 0
+        for col in [0, 1, 2, 3, 4, 5, 7, 8]:
+            first_copy = (first_copy << 1) | (self.matrix[8][col] & 1)
+            if self.verbose:
+                print(f"[DEBUG] extract_format_information: first_copy after col {col} = {first_copy:0b}")
+
+        second_copy = 0
+        for row in [7, 5, 4, 3, 2, 1, 0]:
+            second_copy = (second_copy << 1) | (self.matrix[row][8] & 1)
+            if self.verbose:
+                print(f"[DEBUG] extract_format_information: second_copy after row {row} = {second_copy:0b}")
+
+        raw_format = (first_copy << 7) | second_copy
+        if self.verbose:
+            print(f"[DEBUG] extract_format_information: Raw format (before unmask) = {raw_format:015b}")
+
+        # Unmask the format bits using the mask 0x5412
+        format_info = raw_format ^ 0x5412
+        if self.verbose:
+            print(f"[DEBUG] extract_format_information: Format info (after unmask) = {format_info:015b}")
+
+        # Extract the 5 format data bits (bits 14 to 10) as per QR spec
+        data_bits = (format_info >> 10) & 0b11111
+        if self.debug:
+            print(f"[DEBUG] extract_format_information: Data bits = {data_bits:05b}")
+
+        # The first two bits (bits 4-3) are error correction level, and the last three bits (bits 2-0) are mask pattern
+        error_correction = {
+            0b00: 'M',
+            0b01: 'L',
+            0b10: 'H',
+            0b11: 'Q'
+        }[(data_bits >> 3) & 0b11]
+        mask_pattern = data_bits & 0b111
+        if self.debug:
+            print(f"[DEBUG] extract_format_information: Extracted error correction = {error_correction}, mask pattern = {mask_pattern}")
+
+        return error_correction, mask_pattern
+
+    def extract_version_information(self) -> int:
+        """Extract version information from the QR code (for version >= 7)."""
+        # For versions less than 7, just return the computed version
+        version = self.get_version()
+        if version < 7:
+            return version
+
+        size = len(self.matrix)
+        raw_version = 0
+
+        # Extract version information from bottom-left block
+        for r in range(size - 11, size - 8):
+            for c in range(5, -1, -1):
+                raw_version = (raw_version << 1) | (self.matrix[r][c] & 1)
+
+        if self.debug:
+            print(f"[DEBUG] extract_version_information: Raw version bits = {raw_version:018b}")
+
+        corrected_version = self.correct_version_information(raw_version)
+        return corrected_version
+
+    def _compute_valid_version_info(self, version: int) -> int:
+        """Compute the valid 18-bit version information codeword for the given version using BCH error correction."""
+        generator = 0x1F25
+        codeword = version << 12
+        for i in range(17, 11, -1):
+            if codeword & (1 << i):
+                codeword ^= generator << (i - 12)
+        valid_codeword = (version << 12) | (codeword & 0xFFF)
+        if self.debug:
+            print(f"[DEBUG] _compute_valid_version_info: version = {version}, valid_codeword = {valid_codeword:018b}")
+        return valid_codeword
+
+    def correct_version_information(self, raw_version: int) -> int:
+        """Correct errors in raw version information bits using BCH code by brute-force matching valid codewords."""
+        if self.debug:
+            print(f"[DEBUG] correct_version_information: raw_version = {raw_version:018b}")
+        for version in range(7, 41):
+            valid_codeword = self._compute_valid_version_info(version)
+            diff = bin(valid_codeword ^ raw_version).count('1')
+            if self.debug:
+                print(f"[DEBUG] correct_version_information: testing version {version} with diff = {diff}")
+            if diff <= 3:
+                if self.debug:
+                    print(f"[DEBUG] correct_version_information: corrected to version {version}")
+                return version
+        raise ValueError("Failed to correct version information")
+
+    def unmask_data(self, mask_pattern: int) -> None:
+        """Unmask the data in the QR code by inverting bits in data modules as per the mask pattern."""
+        size = len(self.matrix)
+        function_modules = self.mark_function_modules()
+
+        def mask_condition(i: int, j: int, mask: int) -> bool:
+            if mask == 0:
+                return (i + j) % 2 == 0
+            elif mask == 1:
+                return i % 2 == 0
+            elif mask == 2:
+                return j % 3 == 0
+            elif mask == 3:
+                return (i + j) % 3 == 0
+            elif mask == 4:
+                return ((i // 2) + (j // 3)) % 2 == 0
+            elif mask == 5:
+                return ((i * j) % 2 + (i * j) % 3) == 0
+            elif mask == 6:
+                return (((i * j) % 2 + (i * j) % 3) % 2) == 0
+            elif mask == 7:
+                return (((i + j) % 2 + (i * j) % 3) % 2) == 0
+            else:
+                raise ValueError(f"Invalid mask pattern: {mask}")
+
+        for i in range(size):
+            for j in range(size):
+                # Only unmask data modules
+                if not function_modules[i, j]:
+                    if mask_condition(i, j, mask_pattern):
+                        self.matrix[i][j] ^= 1
+        if self.verbose:
+            print(f"[DEBUG] unmask_data: Finished unmasking process. Matrix:")
+            for row in self.matrix:
+                print("".join("██" if bit == 1 else "  " for bit in row))
+            print("[DEBUG] unmask_data: Finished unmasking process.")
+        # Ensure matrix remains binary
+        assert np.all((self.matrix == 0) | (self.matrix == 1)), "Matrix contains non-binary values after unmasking"
+
+    def extract_data_bits(self) -> list[int]:
+        """Extract the data bits from the QR code following the standard zigzag order."""
+        if self.debug:
+            print("[DEBUG] extract_data_bits: Starting extraction of data bits.")
+        # Mark function modules to know which modules are reserved
+        function_modules = self.mark_function_modules()
+        n = len(self.matrix)
+        data_bits = []
+
+        col = n - 1
+        upward = True
+        while col > 0:
+            # Skip the vertical timing pattern column
+            if col == 6:
+                col -= 1
+            # Determine the row order based on scanning direction
+            row_range = range(n-1, -1, -1) if upward else range(0, n)
+            for row in row_range:
+                for c in [col, col - 1]:
+                    if c < 0 or c >= n:
+                        continue
+                    # Only extract the bit if it's not part of a function module
+                    if not function_modules[row, c]:
+                        bit = int(self.matrix[row][c])
+                        data_bits.append(bit)
+                        if self.verbose:
+                            print(f"[DEBUG] extract_data_bits: Appended bit {bit} from position ({row},{c}).")
+            upward = not upward
             col -= 2
-            up = not up  # Change direction
-        
-        print(f"Extracted {len(data_bits)} data bits")
-        print("First 32 bits:", ''.join(['1' if bit else '0' for bit in data_bits[:32]]))
-        
-        # Group bits into bytes for debugging
-        bytes_data = []
-        for i in range(0, min(32, len(data_bits)), 8):
-            byte_bits = data_bits[i:i+8]
-            if len(byte_bits) == 8:
-                byte = sum(bit << (7-j) for j, bit in enumerate(byte_bits))
-                bytes_data.append(byte)
-        print("First few bytes as hex:", [hex(b)[2:].zfill(2) for b in bytes_data])
-        
+        if self.debug:
+            print(f"[DEBUG] extract_data_bits: Finished extraction, total bits = {len(data_bits)}")
+        # Assert that all extracted bits are binary
+        assert all(bit in (0, 1) for bit in data_bits), "Matrix contains non-binary values in data bits"
         return data_bits
 
-    def bits_to_bytes(self, bits):
-        """Convert a list of bits to bytes."""
-        bytes_data = []
-        for i in range(0, len(bits), 8):
-            if i + 8 <= len(bits):
-                byte = 0
-                for j in range(8):
-                    byte = (byte << 1) | bits[i + j]
-                bytes_data.append(byte)
-        return bytes_data
+    def decode_data(self, data_bits: list[int]) -> str:
+        """Decode the data bits and return the message, supporting multiple segmentation modes."""
+        pointer = 0
+        result = ""
+        version = self.get_version()
+        if self.debug:
+            print("[DEBUG] decode_data: Starting multi-segment decoding.")
+        while pointer + 4 <= len(data_bits):
+            mode_indicator = int(''.join(str(bit) for bit in data_bits[pointer:pointer+4]), 2)
+            if self.debug:
+                print(f"[DEBUG] decode_data: Mode indicator = {mode_indicator:04b} at pointer {pointer}")
+            pointer += 4
+            if mode_indicator == 0:  # Terminator
+                if self.debug:
+                    print("[DEBUG] decode_data: Encountered terminator mode indicator")
+                break
+            if mode_indicator == 4:  # Byte mode
+                count_indicator_length = 8 if version < 10 else 16
+                if pointer + count_indicator_length > len(data_bits):
+                    if self.debug:
+                        print("[DEBUG] decode_data: Not enough bits for byte mode character count indicator")
+                    break
+                count = int(''.join(str(bit) for bit in data_bits[pointer:pointer+count_indicator_length]), 2)
+                if self.debug:
+                    print(f"[DEBUG] decode_data: Byte mode, character count = {count}")
+                pointer += count_indicator_length
+                for i in range(count):
+                    if pointer + 8 > len(data_bits):
+                        if self.debug:
+                            print(f"[DEBUG] decode_data: Not enough bits for byte {i+1}/{count}")
+                        break
+                    byte_val = int(''.join(str(bit) for bit in data_bits[pointer:pointer+8]), 2)
+                    if self.verbose:
+                        print(f"[DEBUG] decode_data: Extracted byte value {byte_val} from bits at pointer {pointer}")
+                    result += chr(byte_val)
+                    pointer += 8
+            elif mode_indicator == 1:  # Numeric mode
+                count_indicator_length = 10 if version < 10 else (12 if version < 27 else 14)
+                if pointer + count_indicator_length > len(data_bits):
+                    if self.debug:
+                        print("[DEBUG] decode_data: Not enough bits for numeric mode character count indicator")
+                    break
+                count = int(''.join(str(bit) for bit in data_bits[pointer:pointer+count_indicator_length]), 2)
+                if self.debug:
+                    print(f"[DEBUG] decode_data: Numeric mode, digit count = {count}")
+                pointer += count_indicator_length
+                # Process groups of 3 digits
+                while count >= 3:
+                    if pointer + 10 > len(data_bits):
+                        if self.debug:
+                            print("[DEBUG] decode_data: Not enough bits for a group of 3 digits in numeric mode")
+                        break
+                    group_val = int(''.join(str(bit) for bit in data_bits[pointer:pointer+10]), 2)
+                    if self.debug:
+                        print(f"[DEBUG] decode_data: Numeric mode: Extracted group value {group_val} from bits at pointer {pointer}")
+                    result += f"{group_val:03d}"
+                    pointer += 10
+                    count -= 3
+                if count == 2:
+                    if pointer + 7 > len(data_bits):
+                        if self.debug:
+                            print("[DEBUG] decode_data: Not enough bits for a group of 2 digits in numeric mode")
+                        break
+                    group_val = int(''.join(str(bit) for bit in data_bits[pointer:pointer+7]), 2)
+                    if self.debug:
+                        print(f"[DEBUG] decode_data: Numeric mode: Extracted 2-digit group value {group_val} from bits at pointer {pointer}")
+                    result += f"{group_val:02d}"
+                    pointer += 7
+                elif count == 1:
+                    if pointer + 4 > len(data_bits):
+                        if self.debug:
+                            print("[DEBUG] decode_data: Not enough bits for a single digit in numeric mode")
+                        break
+                    group_val = int(''.join(str(bit) for bit in data_bits[pointer:pointer+4]), 2)
+                    if self.debug:
+                        print(f"[DEBUG] decode_data: Numeric mode: Extracted single digit value {group_val} from bits at pointer {pointer}")
+                    result += f"{group_val:d}"
+                    pointer += 4
+            elif mode_indicator == 2:  # Alphanumeric mode
+                count_indicator_length = 9 if version < 10 else (11 if version < 27 else 13)
+                if pointer + count_indicator_length > len(data_bits):
+                    if self.debug:
+                        print("[DEBUG] decode_data: Not enough bits for alphanumeric mode character count indicator")
+                    break
+                count = int(''.join(str(bit) for bit in data_bits[pointer:pointer+count_indicator_length]), 2)
+                if self.debug:
+                    print(f"[DEBUG] decode_data: Alphanumeric mode, character count = {count}")
+                pointer += count_indicator_length
+                alphanum_table = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
+                while count >= 2:
+                    if pointer + 11 > len(data_bits):
+                        if self.debug:
+                            print("[DEBUG] decode_data: Not enough bits for a pair in alphanumeric mode")
+                        break
+                    value = int(''.join(str(bit) for bit in data_bits[pointer:pointer+11]), 2)
+                    if self.verbose:
+                        print(f"[DEBUG] decode_data: Alphanumeric mode: Extracted pair value {value} from bits at pointer {pointer}")
+                    if self.debug:
+                        print(result, " add ", value, " = ", alphanum_table[value // 45], alphanum_table[value % 45])
+                    result += alphanum_table[value // 45] + alphanum_table[value % 45]
+                    pointer += 11
+                    count -= 2
+                if count == 1:
+                    if pointer + 6 > len(data_bits):
+                        if self.debug:
+                            print("[DEBUG] decode_data: Not enough bits for a single character in alphanumeric mode")
+                        break
+                    value = int(''.join(str(bit) for bit in data_bits[pointer:pointer+6]), 2)
+                    if self.verbose:
+                        print(f"[DEBUG] decode_data: Alphanumeric mode: Extracted single character value {value} from bits at pointer {pointer}")
+                    result += alphanum_table[value]
+                    pointer += 6
+            else:
+                if self.debug:
+                    print(f"[DEBUG] decode_data: Unsupported mode indicator {mode_indicator:04b}")
+                break
+        if self.debug:
+            print(f"[DEBUG] decode_data: Final decoded message = {result}")
+        return result
 
-    def parse_mode_and_count(self, data_bits, version):
-        """Parse the mode indicator and character count from the data bits."""
-        print("\nStep 4: Parsing Mode and Character Count")
-        
-        # Convert first 4 bits to mode indicator (MSB first)
-        mode_bits = sum(bit << (3-i) for i, bit in enumerate(data_bits[:4]))
-        mode_str = format(mode_bits, '04b')
-        print(f"Mode indicator bits: {mode_str}")
-        
-        # For byte mode QR codes, the mode indicator should be 0100 (4)
-        if mode_bits != 4:  # 0100 in binary
-            raise ValueError(f"Invalid mode indicator: {mode_str}")
-        
-        mode = 'byte'  # We know it's byte mode
-        print(f"Detected mode: {mode}")
-        
-        # Get character count indicator length for this version and mode
-        count_length = self.char_count_bits[mode][version]
-        
-        # Get character count (MSB first)
-        count_bits = data_bits[4:4+count_length]
-        count = sum(bit << (count_length-1-i) for i, bit in enumerate(count_bits))
-        print(f"Character count bits: {''.join(['1' if bit else '0' for bit in count_bits])}")
-        print(f"Character count: {count}")
-        
-        return mode, count, 4 + count_length
-
-    def decode_byte_mode(self, data_bits, char_count):
-        """Decode data bits in byte mode."""
-        print("\nStep 5: Decoding Byte Mode Data")
-        
-        bytes_data = []
-        for i in range(0, char_count * 8, 8):
-            if i + 8 <= len(data_bits):
-                byte = sum(bit << (7-j) for j, bit in enumerate(data_bits[i:i+8]))
-                bytes_data.append(byte)
-        
-        print(f"First few bytes as hex: {[hex(b)[2:].zfill(2) for b in bytes_data[:4]]}")
-        print(f"Raw bytes: {bytes_data}")
-        
-        # Convert bytes to string
-        try:
-            text = bytes(bytes_data).decode('utf-8')
-            print(f"Successfully decoded text: {text}")
-            print("=== End QR Code Decoding Debug ===\n")
-            return text
-        except UnicodeDecodeError:
-            print("Error: Failed to decode bytes as UTF-8")
-            print("=== End QR Code Decoding Debug ===\n")
-            return None
-
-    def decode(self, matrix):
-        """Decode a QR code matrix."""
-        # Convert matrix to numpy array if it isn't already
-        matrix = np.array(matrix)
-        
-        # Step 1: Get format information
-        ec_level, mask_pattern = self.get_format_info(matrix)
-        
-        # Step 2: Unmask the data
-        unmasked_matrix = self.unmask_data(matrix, mask_pattern)
-        
-        # Step 3: Extract the data bits
-        data_bits = self.extract_data_bits(unmasked_matrix)
-        
-        # Step 4: Parse mode and character count
-        # For this example, we know it's version 3
-        mode, char_count, data_start = self.parse_mode_and_count(data_bits, version=3)
-        
-        # Step 5: Decode the data based on mode
-        if mode == 'byte':
-            return self.decode_byte_mode(data_bits[data_start:], char_count)
+    def _get_data_capacity(self) -> int:
+        """Return the number of data bits (not including error correction) for the QR code.
+        Uses a lookup table for versions 1 to 4.
+        """
+        version = self.get_version()
+        error_correction, _ = self.extract_format_information()
+        lookup = {
+            1: {'L': 152, 'M': 128, 'Q': 104, 'H': 72},
+            2: {'L': 272, 'M': 224, 'Q': 176, 'H': 128},
+            3: {'L': 440, 'M': 352, 'Q': 272, 'H': 208},
+            4: {'L': 640, 'M': 512, 'Q': 384, 'H': 288}
+        }
+        if version in lookup:
+            return lookup[version].get(error_correction, 152)
         else:
-            raise ValueError(f"Unsupported mode: {mode}")
+            # Fallback for higher versions
+            total_modules = len(self.matrix) ** 2
+            function_modules = np.sum(self.mark_function_modules())
+            return int(total_modules - function_modules)
 
-# Example usage
+    def decode(self) -> str:
+        """Decode the QR code and return the message."""
+        # 1. Get version
+        version = self.get_version()
+        if self.debug:
+            print(f"[DEBUG] decode: QR code version = {version}")
+
+        # 2. Extract format information
+        error_correction, mask_pattern = self.extract_format_information()
+        if self.debug:
+            print(f"[DEBUG] decode: Error correction level = {error_correction}, Mask pattern = {mask_pattern}")
+
+        # 3. Extract version information (for version >= 7)
+        if version >= 7:
+            version_info = self.extract_version_information()
+            if self.debug:
+                print(f"[DEBUG] decode: Version information = {version_info}")
+
+        # 4. Unmask data
+        self.unmask_data(mask_pattern)
+        if self.debug:
+            print("[DEBUG] decode: Data unmasked")
+
+        # 5. Extract data bits and trim extra bits
+        data_bits = self.extract_data_bits()
+        capacity = self._get_data_capacity()
+        if self.debug:
+            print(f"[DEBUG] decode: Trimming data bits to capacity: {capacity} bits (out of {len(data_bits)})")
+        data_bits = data_bits[:capacity]
+        if self.debug:
+            print(f"[DEBUG] decode: Using {len(data_bits)} data bits for decoding")
+
+        # 6. Decode data bits
+        return self.decode_data(data_bits)
+
+
 if __name__ == "__main__":
-    from qr_gen import QRCode
+    #qr_code = QRCode('https://cs.unibuc.ro/~crusu/asc/index.html', version=-1, error_correction='H', mask=-1, debug=False, mode="byte")
+    # qr_code.draw()
+    qr_code = QRCode('https://cs.unibuc.ro/~crusu/asc/index.html', version=-1, error_correction='L', mask=-1, debug=False, mode="auto")
+    data_bits = qr_code.get_matrix()
+    version = qr_code.get_version()
+    error_correction = qr_code.get_error_correction()
+    mask_pattern = qr_code.get_mask()
     
-    # Create a QR code
-    text = "https://cs.unibuc.ro/~crusu/asc/"
-    qr = QRCode(text, version=3, error_correction='L')
-    qr.create_data_segment('byte')
-    
-    # Get the matrix
-    matrix = qr.modules
-    print(matrix)
+    print("Generated QR Code:")
+    for row in data_bits:
+        print("".join("██" if bit == 1 else "  " for bit in row))
+    print(f"Generated version: {version}")
+    print(f"Error correction: {error_correction}")
+    print(f"Mask pattern: {mask_pattern}")
 
-    # print the matrix, with white and black squares
-    for row in matrix:
-        for element in row:
-            print('██' if element else '  ', end='')
-        print()
-    
-    # Decode the QR code
-    decoder = QRDecoder()
-    decoded_text = decoder.decode(matrix)
-    print(f"Original text: {text}")
-    print(f"Decoded text: {decoded_text}") 
+
+    qr_decode = QRDecode(data_bits, debug=True)
+    decoded_text = qr_decode.decode()
+    print(f"\nDecoded text: {decoded_text}")
+
