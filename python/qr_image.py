@@ -114,26 +114,30 @@ def image_to_matrix(image_path: str, threshold: int = 128, debug: bool = False) 
             avg = np.mean(region)
             qr_matrix[i, j] = avg
 
-    if debug:
-        print("[DEBUG] QR Matrix built.")
-        # Create a visualization overlaying the grid on the cropped, binarized image
-        vis = np.where(cropped, 0, 255).astype(np.uint8)
-        base_img = Image.fromarray(vis).convert('L').convert('RGBA')
-        # Create an overlay for grid lines with transparency
-        overlay = Image.new('RGBA', base_img.size, (255, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
+    #if debug:
+    #    print("[DEBUG] QR Matrix built.")
+    #    # Create a visualization overlaying the grid on the cropped, binarized image
+    #    vis = np.where(cropped, 0, 255).astype(np.uint8)
+    #    base_img = Image.fromarray(vis).convert('L').convert('RGBA')
+    #    # Create an overlay for grid lines with transparency
+
+    #    overlay = Image.new('RGBA', base_img.size, (255, 0, 0, 0))
+    #    draw = ImageDraw.Draw(overlay)
         
-        # Draw grid lines using the precise module size
-        for i in range(module_count + 1):
-            y = i * one_module_size
-            draw.line([(0, y), (cropped.shape[1], y)], fill=(255, 0, 0, 255), width=1)
-        for j in range(module_count + 1):
-            x = j * one_module_size
-            draw.line([(x, 0), (x, cropped.shape[0])], fill=(255, 0, 0, 255), width=1)
-            
-        combined = Image.alpha_composite(base_img, overlay)
-        combined.save('grid_visualization.png')
-        print("[DEBUG] Grid visualization saved to grid_visualization.png")
+    #    # Draw grid lines using the precise module size
+    #    for i in range(module_count + 1):
+    #        y = i * one_module_size
+    #        draw.line([(0, y), (cropped.shape[1], y)], fill=(255, 0, 0, 255), width=1)
+    #    for j in range(module_count + 1):
+    #        x = j * one_module_size
+    #        draw.line([(x, 0), (x, cropped.shape[0])], fill=(255, 0, 0, 255), width=1)
+
+
+    #    combined = Image.alpha_composite(base_img, overlay)
+    #    combined.save('grid_visualization.png')
+    #    print("[DEBUG] Grid visualization saved to grid_visualization.png")
+
+
 
     # Convert average matrix to binarized matrix using threshold
     binarized_matrix = (qr_matrix < threshold).astype(int)
