@@ -27,12 +27,12 @@ cd python
 
 2. Install the required dependencies:
 ```bash
-pip install numpy matplotlib Pillow
+pip install -r requirements.txt
 ```
 
 ## Usage
 
-The main interface is through the `qr_tool.py` script, which provides two main commands:
+The CLI is used through the `qr_tool.py` script, which provides two main commands:
 
 ### Creating a QR Code
 
@@ -69,6 +69,7 @@ python qr_tool.py --help
 - `tokens.py`: Tokenization of the input text for optimal encoding
 - `qr_decode.py`: QR code decoding implementation
 - `qr_image.py`: Image processing utilities
+- `api.py`: API implementation
 
 ## Technical Details
 
