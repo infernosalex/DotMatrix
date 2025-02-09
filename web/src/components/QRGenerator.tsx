@@ -3,9 +3,9 @@ import ModuleCell from './common/ModuleCell';
 import PrimaryButton from './common/PrimaryButton';
 import IconButton from './common/IconButton';
 import StageButton from './common/StageButton';
-import axios from 'axios'
 import { FaLongArrowAltLeft, FaLongArrowAltRight } from "react-icons/fa";
 import CollapsibleSection from './common/CollapsibleSection';
+import { generateQR as callGenerateQR } from '../tools/api';
 
 interface QRResponse {
   intermediate_stages: {
@@ -49,16 +49,9 @@ export function QRGenerator() {
     try {
       setIsGenerating(true);
       setCurrentStage(0);
-      
-      const response = await axios.post('http://localhost:5000/api/generate', {
-        data: text,
-        error_correction: errorCorrection,
-        version: version,
-        mask: mask,
-        mode: mode
-      });
 
-      setQrData(response.data);
+      const data = await callGenerateQR(text, errorCorrection, version, mask, mode);
+      setQrData(data);
     } catch (error) {
       console.error('Error generating QR code:', error);
     } finally {

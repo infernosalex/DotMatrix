@@ -3,7 +3,7 @@ import ModuleCell from './common/ModuleCell';
 import PrimaryButton from './common/PrimaryButton';
 import IconButton from './common/IconButton';
 import StageButton from './common/StageButton';
-import axios from 'axios';
+import { decodeQR as callDecodeQR } from '../tools/api';
 import { FaLongArrowAltLeft, FaLongArrowAltRight } from 'react-icons/fa';
 import CollapsibleSection from './common/CollapsibleSection';
 
@@ -44,14 +44,10 @@ export function QRDecode() {
     setIsDecoding(true);
     setDecodeData(null);
     setCurrentStage(0);
-    const formData = new FormData();
-    formData.append('image', selectedFile);
 
     try {
-      const response = await axios.post('http://localhost:5000/api/decode', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-      setDecodeData(response.data);
+      const data = await callDecodeQR(selectedFile);
+      setDecodeData(data);
     } catch (error) {
       console.error('Error decoding QR code:', error);
     } finally {
