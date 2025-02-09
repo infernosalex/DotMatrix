@@ -1,8 +1,9 @@
 import io
 import contextlib
 import tempfile
+import os
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import numpy as np
 from flask_cors import CORS
 
@@ -11,8 +12,23 @@ from qr_gen import QRCode
 from qr_decode import QRDecode
 from qr_image import image_to_matrix
 
-app = Flask(__name__)
+# Initialize Flask app with static files configuration
+app = Flask(__name__, 
+            static_folder='../web/dist',  # Path to Vite build output
+            static_url_path='')
 CORS(app)
+
+# Serve static files from Vite build
+@app.route('/')
+def serve_frontend():
+    return send_from_directory(app.static_folder, 'index.html')
+
+# Catch-all route to handle client-side routing
+@app.route('/<path:path>')
+def serve_static(path):
+    if os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    return send_from_directory(app.static_folder, 'index.html')
 
 # Helper function to convert numpy types to native Python types for JSON serialization
 def convert_numpy(obj):

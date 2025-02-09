@@ -19,7 +19,7 @@ export interface QRDecodeResponse {
 export async function decodeQR(file: File): Promise<QRDecodeResponse> {
   const formData = new FormData();
   formData.append('image', file);
-  const response = await axios.post('http://localhost:5000/api/decode', formData, {
+  const response = await axios.post('/api/decode', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   });
   return response.data;
@@ -43,7 +43,7 @@ export interface QRResponse {
 }
 
 export async function generateQR(text: string, error_correction: string, version: number, mask: number, mode: string): Promise<QRResponse> {
-  const response = await axios.post('http://localhost:5000/api/generate', {
+  const response = await axios.post('/api/generate', {
     data: text,
     error_correction,
     version,
