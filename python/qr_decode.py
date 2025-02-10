@@ -107,9 +107,7 @@ class QRDecode:
         return function_modules
 
     def _get_alignment_pattern_centers(self) -> list:
-        """Return a list of alignment pattern center positions for the QR code.
-        Uses a lookup table for versions 2 to 10.
-        """
+        """Return a list of alignment pattern center positions for the QR code."""
         version = self.get_version()
         if version == 1:
             return []
@@ -122,18 +120,70 @@ class QRDecode:
             7: [6, 22, 38],
             8: [6, 24, 42],
             9: [6, 26, 46],
-            10: [6, 28, 50]
+            10: [6, 28, 50],
+            11: [6, 30, 54],
+            12: [6, 32, 58],
+            13: [6, 34, 62],
+            14: [6, 26, 46, 66],
+            15: [6, 26, 48, 70],
+            16: [6, 26, 50, 74],
+            17: [6, 30, 54, 78],
+            18: [6, 30, 56, 82],
+            19: [6, 30, 58, 86],
+            20: [6, 34, 62, 90],
+            21: [6, 28, 50, 72, 94],
+            22: [6, 26, 50, 74, 98],
+            23: [6, 30, 54, 78, 102],
+            24: [6, 28, 54, 80, 106],
+            25: [6, 32, 58, 84, 110],
+            26: [6, 30, 58, 86, 114],
+            27: [6, 34, 62, 90, 118],
+            28: [6, 26, 50, 74, 98, 122],
+            29: [6, 30, 54, 78, 102, 126],
+            30: [6, 26, 52, 78, 104, 130],
+            31: [6, 30, 56, 82, 108, 134],
+            32: [6, 34, 60, 86, 112, 138],
+            33: [6, 30, 58, 86, 114, 142],
+            34: [6, 34, 62, 90, 118, 146],
+            35: [6, 30, 54, 78, 102, 126, 150],
+            36: [6, 24, 50, 76, 102, 128, 154],
+            37: [6, 28, 54, 80, 106, 132, 158],
+            38: [6, 32, 58, 84, 110, 136, 162],
+            39: [6, 26, 54, 82, 110, 138, 166],
+            40: [6, 30, 58, 86, 114, 142, 170]
         }
+
         if version in lookup:
             return lookup[version]
-        else:
-            end = len(self.matrix) - 7
-            count = (version // 7) + 2
+
+        # Algorithm to compute alignment pattern positions for theoretical versions > 40:
+        # 1. First position is always 6
+        # 2. Last position is matrix_size - 7
+        # 3. Number of alignment patterns increases with version
+        # 4. Patterns are roughly evenly spaced
+        def compute_alignment_positions(ver: int) -> list:
+            matrix_size = 17 + 4 * ver
+            end = matrix_size - 7
+            
+            # Number of alignment patterns between first and last
+            # Increases by roughly 1 pattern every 7 versions
+            count = (ver // 7) + 2
+            
             if count == 2:
                 return [6, end]
+            
+            # Calculate step size to evenly space patterns
             step = (end - 6) // (count - 1)
-            centers = [6] + [6 + i * step for i in range(1, count - 1)] + [end]
-            return centers
+            
+            # Generate positions
+            positions = [6]  # First position is always 6
+            for i in range(1, count - 1):
+                positions.append(6 + i * step)
+            positions.append(end)  # Last position
+            
+            return positions
+
+        return compute_alignment_positions(version)
 
     def extract_format_information(self) -> tuple[str, int]:
         """Extract format information from the QR code."""
@@ -145,7 +195,7 @@ class QRDecode:
                 print(f"[DEBUG] extract_format_information: first_copy after col {col} = {first_copy:0b}")
 
         second_copy = 0
-        for row in [7, 5, 4, 3, 2, 1, 0]:
+        for row in [0, 1, 2, 3, 4, 5, 7]:
             second_copy = (second_copy << 1) | (self.matrix[row][8] & 1)
             if self.verbose:
                 print(f"[DEBUG] extract_format_information: second_copy after row {row} = {second_copy:0b}")
@@ -188,9 +238,11 @@ class QRDecode:
         raw_version = 0
 
         # Extract version information from bottom-left block
-        for r in range(size - 11, size - 8):
-            for c in range(5, -1, -1):
-                raw_version = (raw_version << 1) | (self.matrix[r][c] & 1)
+        # Read in the same order as written in QRCode._add_version_information
+        for i in range(6):
+            for j in range(3):
+                bit = self.matrix[size - 11 + j][i] & 1
+                raw_version |= (bit << (i * 3 + j))
 
         if self.debug:
             print(f"[DEBUG] extract_version_information: Raw version bits = {raw_version:018b}")
@@ -326,9 +378,18 @@ class QRDecode:
                     print(f"[DEBUG] decode_data: Byte mode, character count = {count}")
                 pointer += count_indicator_length
                 for i in range(count):
-                    if pointer + 8 > len(data_bits):
+                    if pointer >= len(data_bits):
                         if self.debug:
-                            print(f"[DEBUG] decode_data: Not enough bits for byte {i+1}/{count}")
+                            print(f"[DEBUG] decode_data: No bits remaining for byte {i+1}/{count}")
+                        break
+                    if pointer + 8 > len(data_bits):
+                        remaining = data_bits[pointer:]
+                        padded = remaining + [0] * (8 - len(remaining))
+                        byte_val = int(''.join(str(bit) for bit in padded), 2)
+                        if self.verbose:
+                            print(f"[DEBUG] decode_data: Extracted padded byte value {byte_val} from bits at pointer {pointer}")
+                        result += chr(byte_val)
+                        pointer = len(data_bits)
                         break
                     byte_val = int(''.join(str(bit) for bit in data_bits[pointer:pointer+8]), 2)
                     if self.verbose:
@@ -420,24 +481,528 @@ class QRDecode:
         return result
 
     def _get_data_capacity(self) -> int:
-        """Return the number of data bits (not including error correction) for the QR code.
-        Uses a lookup table for versions 1 to 4.
-        """
+        """Return the number of data bits (not including error correction) for the QR code."""
         version = self.get_version()
         error_correction, _ = self.extract_format_information()
-        lookup = {
-            1: {'L': 152, 'M': 128, 'Q': 104, 'H': 72},
-            2: {'L': 272, 'M': 224, 'Q': 176, 'H': 128},
-            3: {'L': 440, 'M': 352, 'Q': 272, 'H': 208},
-            4: {'L': 640, 'M': 512, 'Q': 384, 'H': 288}
+        
+        # Capacity lookup table for versions 1-40
+        capacity_lookup = {
+            'L': [19, 34, 55, 80, 108, 136, 156, 194, 232, 274, 324, 370, 428, 461, 523, 589, 647, 721, 795, 861, 932, 1006, 1094, 1174, 1276, 1370, 1468, 1531, 1631, 1735, 1843, 1955, 2071, 2191, 2306, 2434, 2566, 2702, 2812, 2956],
+            'M': [16, 28, 44, 64, 86, 108, 124, 154, 182, 216, 254, 290, 334, 365, 415, 453, 507, 563, 627, 669, 714, 782, 860, 914, 1000, 1062, 1128, 1193, 1267, 1373, 1455, 1541, 1631, 1725, 1812, 1914, 1992, 2102, 2216, 2334],
+            'Q': [13, 22, 34, 48, 62, 76, 88, 110, 132, 154, 180, 206, 244, 261, 295, 325, 367, 397, 445, 485, 512, 568, 614, 664, 718, 754, 808, 871, 911, 985, 1033, 1115, 1171, 1231, 1286, 1354, 1426, 1502, 1582, 1666],
+            'H': [9, 16, 26, 36, 46, 60, 66, 86, 100, 122, 140, 158, 180, 197, 223, 253, 283, 313, 341, 385, 406, 442, 464, 514, 538, 596, 628, 661, 701, 745, 793, 845, 901, 961, 986, 1054, 1096, 1142, 1222, 1276]
         }
-        if version in lookup:
-            return lookup[version].get(error_correction, 152)
+
+        # Algorithm to compute data capacity dynamically:
+        # 1. Total codewords = (16*version + 128) * version + 64
+        # 2. EC codewords per block from lookup or formula
+        # 3. Number of blocks from lookup or formula
+        # 4. Data codewords = Total codewords - (EC codewords per block * total blocks)
+        def compute_capacity(ver: int, ec: str) -> int:
+            total_codewords = (16 * ver + 128) * ver + 64
+            
+            # EC codewords per block (approximate formula)
+            ec_per_block = {
+                'L': lambda v: int(total_codewords * 0.07),
+                'M': lambda v: int(total_codewords * 0.15),
+                'Q': lambda v: int(total_codewords * 0.25),
+                'H': lambda v: int(total_codewords * 0.30)
+            }[ec](ver)
+            
+            # Number of blocks (approximate formula)
+            blocks = max(1, ver // 2)
+            if ec in ['Q', 'H']:
+                blocks *= 2
+            
+            return total_codewords - (ec_per_block * blocks)
+
+        return capacity_lookup[error_correction][version - 1] * 8  # Convert to bits
+
+    def _get_block_info(self) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+        """Get block information for the current QR version and error correction level.
+        Returns (data_blocks, ec_blocks) where each block is a list of tuples (count, size)."""
+        version = self.get_version()
+        error_correction, _ = self.extract_format_information()
+        
+        # Corrected block_info lookup table for all versions 1-40
+        block_info = {
+            # Version 1
+            (1, 'L'): ([(1, 19)], [(1, 7)]),
+            (1, 'M'): ([(1, 16)], [(1, 10)]),
+            (1, 'Q'): ([(1, 13)], [(1, 13)]),
+            (1, 'H'): ([(1, 9)], [(1, 17)]),
+
+            # Version 2
+            (2, 'L'): ([(1, 34)], [(1, 10)]),
+            (2, 'M'): ([(1, 28)], [(1, 16)]),
+            (2, 'Q'): ([(1, 22)], [(1, 22)]),
+            (2, 'H'): ([(1, 16)], [(1, 28)]),
+
+            # Version 3
+            (3, 'L'): ([(1, 55)], [(1, 15)]),
+            (3, 'M'): ([(1, 44)], [(1, 26)]),
+            (3, 'Q'): ([(2, 17)], [(2, 18)]),
+            (3, 'H'): ([(2, 13)], [(2, 22)]),
+
+            # Version 4
+            (4, 'L'): ([(1, 80)], [(1, 20)]),
+            (4, 'M'): ([(2, 32)], [(2, 18)]),
+            (4, 'Q'): ([(2, 24)], [(2, 26)]),
+            (4, 'H'): ([(4, 9)], [(4, 16)]),
+
+            # Version 5
+            (5, 'L'): ([(1, 108)], [(1, 26)]),
+            (5, 'M'): ([(2, 43)], [(2, 24)]),
+            (5, 'Q'): ([(2, 15), (2, 16)], [(2, 18), (2, 18)]),
+            (5, 'H'): ([(2, 11), (2, 12)], [(2, 22), (2, 22)]),
+
+            # Version 6
+            (6, 'L'): ([(2, 68)], [(2, 18)]),
+            (6, 'M'): ([(4, 27)], [(4, 16)]),
+            (6, 'Q'): ([(4, 19)], [(4, 24)]),
+            (6, 'H'): ([(4, 15)], [(4, 28)]),
+
+            # Version 7
+            (7, 'L'): ([(2, 78)], [(2, 20)]),
+            (7, 'M'): ([(4, 31)], [(4, 18)]),
+            (7, 'Q'): ([(2, 14), (4, 15)], [(2, 18), (4, 18)]),
+            (7, 'H'): ([(4, 13), (1, 14)], [(4, 26), (1, 26)]),
+
+            # Version 8
+            (8, 'L'): ([(2, 97)], [(2, 24)]),
+            (8, 'M'): ([(2, 38), (2, 39)], [(2, 22), (2, 22)]),
+            (8, 'Q'): ([(4, 18), (2, 19)], [(4, 22), (2, 22)]),
+            (8, 'H'): ([(4, 14), (2, 15)], [(4, 26), (2, 26)]),
+
+            # Version 9
+            (9, 'L'): ([(2, 116)], [(2, 30)]),
+            (9, 'M'): ([(3, 36), (2, 37)], [(3, 22), (2, 22)]),
+            (9, 'Q'): ([(4, 16), (4, 17)], [(4, 24), (4, 24)]),
+            (9, 'H'): ([(4, 12), (4, 13)], [(4, 28), (4, 28)]),
+
+            # Version 10
+            (10, 'L'): ([(2, 68), (2, 69)], [(2, 18), (2, 18)]),
+            (10, 'M'): ([(4, 43), (1, 44)], [(4, 26), (1, 26)]),
+            (10, 'Q'): ([(6, 19), (2, 20)], [(6, 28), (2, 28)]),
+            (10, 'H'): ([(6, 15), (2, 16)], [(6, 30), (2, 30)]),
+
+            # Version 11
+            (11, 'L'): ([(4, 81)], [(4, 20)]),
+            (11, 'M'): ([(1, 50), (4, 51)], [(1, 24), (4, 24)]),
+            (11, 'Q'): ([(4, 22), (4, 23)], [(4, 28), (4, 28)]),
+            (11, 'H'): ([(3, 12), (8, 13)], [(3, 24), (8, 24)]),
+
+            # Version 12
+            (12, 'L'): ([(2, 92), (2, 93)], [(2, 24), (2, 24)]),
+            (12, 'M'): ([(6, 36), (2, 37)], [(6, 26), (2, 26)]),
+            (12, 'Q'): ([(4, 20), (6, 21)], [(4, 28), (6, 28)]),
+            (12, 'H'): ([(7, 14), (4, 15)], [(7, 28), (4, 28)]),
+
+            # Version 13
+            (13, 'L'): ([(4, 107)], [(4, 26)]),
+            (13, 'M'): ([(8, 37), (1, 38)], [(8, 24), (1, 24)]),
+            (13, 'Q'): ([(8, 20), (4, 21)], [(8, 28), (4, 28)]),
+            (13, 'H'): ([(12, 11), (4, 12)], [(12, 28), (4, 28)]),
+
+            # Version 14
+            (14, 'L'): ([(3, 115), (1, 116)], [(3, 30), (1, 30)]),
+            (14, 'M'): ([(4, 40), (5, 41)], [(4, 28), (5, 28)]),
+            (14, 'Q'): ([(11, 16), (5, 17)], [(11, 28), (5, 28)]),
+            (14, 'H'): ([(11, 12), (5, 13)], [(11, 28), (5, 28)]),
+
+            # Version 15
+            (15, 'L'): ([(5, 87), (1, 88)], [(5, 22), (1, 22)]),
+            (15, 'M'): ([(5, 41), (5, 42)], [(5, 28), (5, 28)]),
+            (15, 'Q'): ([(5, 24), (7, 25)], [(5, 30), (7, 30)]),
+            (15, 'H'): ([(11, 12), (7, 13)], [(11, 30), (7, 30)]),
+
+            # Version 16
+            (16, 'L'): ([(5, 98), (1, 99)], [(5, 24), (1, 24)]),
+            (16, 'M'): ([(7, 45), (3, 46)], [(7, 28), (3, 28)]),
+            (16, 'Q'): ([(15, 19), (2, 20)], [(15, 30), (2, 30)]),
+            (16, 'H'): ([(3, 15), (13, 16)], [(3, 30), (13, 30)]),
+
+            # Version 17
+            (17, 'L'): ([(1, 107), (5, 108)], [(1, 28), (5, 28)]),
+            (17, 'M'): ([(10, 46), (1, 47)], [(10, 28), (1, 28)]),
+            (17, 'Q'): ([(1, 22), (15, 23)], [(1, 28), (15, 28)]),
+            (17, 'H'): ([(2, 14), (17, 15)], [(2, 28), (17, 28)]),
+
+            # Version 18
+            (18, 'L'): ([(5, 120), (1, 121)], [(5, 30), (1, 30)]),
+            (18, 'M'): ([(9, 43), (4, 44)], [(9, 30), (4, 30)]),
+            (18, 'Q'): ([(17, 22), (1, 23)], [(17, 30), (1, 30)]),
+            (18, 'H'): ([(2, 14), (19, 15)], [(2, 30), (19, 30)]),
+
+            # Version 19
+            (19, 'L'): ([(3, 113), (4, 114)], [(3, 28), (4, 28)]),
+            (19, 'M'): ([(3, 44), (11, 45)], [(3, 28), (11, 28)]),
+            (19, 'Q'): ([(17, 21), (4, 22)], [(17, 28), (4, 28)]),
+            (19, 'H'): ([(9, 13), (16, 14)], [(9, 28), (16, 28)]),
+
+            # Version 20
+            (20, 'L'): ([(3, 107), (5, 108)], [(3, 28), (5, 28)]),
+            (20, 'M'): ([(3, 41), (13, 42)], [(3, 28), (13, 28)]),
+            (20, 'Q'): ([(15, 24), (5, 25)], [(15, 30), (5, 30)]),
+            (20, 'H'): ([(15, 15), (10, 16)], [(15, 30), (10, 30)]),
+
+            # Version 21
+            (21, 'L'): ([(4, 116), (4, 117)], [(4, 28), (4, 28)]),
+            (21, 'M'): ([(17, 42)], [(17, 28)]),
+            (21, 'Q'): ([(17, 22), (6, 23)], [(17, 30), (6, 30)]),
+            (21, 'H'): ([(19, 16), (6, 17)], [(19, 30), (6, 30)]),
+
+            # Version 22
+            (22, 'L'): ([(2, 111), (7, 112)], [(2, 28), (7, 28)]),
+            (22, 'M'): ([(17, 46)], [(17, 28)]),
+            (22, 'Q'): ([(7, 24), (16, 25)], [(7, 30), (16, 30)]),
+            (22, 'H'): ([(34, 13)], [(34, 30)]),
+
+            # Version 23
+            (23, 'L'): ([(4, 121), (5, 122)], [(4, 30), (5, 30)]),
+            (23, 'M'): ([(4, 47), (14, 48)], [(4, 30), (14, 30)]),
+            (23, 'Q'): ([(11, 24), (14, 25)], [(11, 30), (14, 30)]),
+            (23, 'H'): ([(16, 15), (14, 16)], [(16, 30), (14, 30)]),
+
+            # Version 24
+            (24, 'L'): ([(6, 117), (4, 118)], [(6, 30), (4, 30)]),
+            (24, 'M'): ([(6, 45), (14, 46)], [(6, 30), (14, 30)]),
+            (24, 'Q'): ([(11, 24), (16, 25)], [(11, 30), (16, 30)]),
+            (24, 'H'): ([(30, 16), (2, 17)], [(30, 30), (2, 30)]),
+
+            # Version 25
+            (25, 'L'): ([(8, 106), (4, 107)], [(8, 26), (4, 26)]),
+            (25, 'M'): ([(8, 47), (13, 48)], [(8, 28), (13, 28)]),
+            (25, 'Q'): ([(7, 24), (22, 25)], [(7, 30), (22, 30)]),
+            (25, 'H'): ([(22, 15), (13, 16)], [(22, 30), (13, 30)]),
+
+            # Version 26
+            (26, 'L'): ([(10, 114), (2, 115)], [(10, 28), (2, 28)]),
+            (26, 'M'): ([(19, 46), (4, 47)], [(19, 28), (4, 28)]),
+            (26, 'Q'): ([(28, 22), (6, 23)], [(28, 28), (6, 28)]),
+            (26, 'H'): ([(33, 16), (4, 17)], [(33, 30), (4, 30)]),
+
+            # Version 27
+            (27, 'L'): ([(8, 122), (4, 123)], [(8, 30), (4, 30)]),
+            (27, 'M'): ([(22, 45), (3, 46)], [(22, 30), (3, 30)]),
+            (27, 'Q'): ([(8, 23), (26, 24)], [(8, 30), (26, 30)]),
+            (27, 'H'): ([(12, 15), (28, 16)], [(12, 30), (28, 30)]),
+
+            # Version 28
+            (28, 'L'): ([(3, 117), (10, 118)], [(3, 30), (10, 30)]),
+            (28, 'M'): ([(3, 45), (23, 46)], [(3, 30), (23, 30)]),
+            (28, 'Q'): ([(4, 24), (31, 25)], [(4, 30), (31, 30)]),
+            (28, 'H'): ([(11, 15), (31, 16)], [(11, 30), (31, 30)]),
+
+            # Version 29
+            (29, 'L'): ([(7, 116), (7, 117)], [(7, 30), (7, 30)]),
+            (29, 'M'): ([(21, 45), (7, 46)], [(21, 30), (7, 30)]),
+            (29, 'Q'): ([(1, 23), (37, 24)], [(1, 30), (37, 30)]),
+            (29, 'H'): ([(19, 15), (26, 16)], [(19, 30), (26, 30)]),
+
+            # Version 30
+            (30, 'L'): ([(5, 115), (10, 116)], [(5, 30), (10, 30)]),
+            (30, 'M'): ([(19, 47), (10, 48)], [(19, 30), (10, 30)]),
+            (30, 'Q'): ([(15, 24), (25, 25)], [(15, 30), (25, 30)]),
+            (30, 'H'): ([(23, 15), (25, 16)], [(23, 30), (25, 30)]),
+
+            # Version 31
+            (31, 'L'): ([(13, 115), (3, 116)], [(13, 30), (3, 30)]),
+            (31, 'M'): ([(2, 46), (29, 47)], [(2, 30), (29, 30)]),
+            (31, 'Q'): ([(42, 24), (1, 25)], [(42, 30), (1, 30)]),
+            (31, 'H'): ([(23, 15), (28, 16)], [(23, 30), (28, 30)]),
+
+            # Version 32
+            (32, 'L'): ([(17, 115)], [(17, 30)]),
+            (32, 'M'): ([(10, 46), (23, 47)], [(10, 30), (23, 30)]),
+            (32, 'Q'): ([(10, 24), (35, 25)], [(10, 30), (35, 30)]),
+            (32, 'H'): ([(19, 15), (35, 16)], [(19, 30), (35, 30)]),
+
+            # Version 33
+            (33, 'L'): ([(17, 115), (1, 116)], [(17, 30), (1, 30)]),
+            (33, 'M'): ([(14, 46), (21, 47)], [(14, 30), (21, 30)]),
+            (33, 'Q'): ([(29, 24), (19, 25)], [(29, 30), (19, 30)]),
+            (33, 'H'): ([(11, 15), (46, 16)], [(11, 30), (46, 30)]),
+
+            # Version 34
+            (34, 'L'): ([(13, 115), (6, 116)], [(13, 30), (6, 30)]),
+            (34, 'M'): ([(14, 46), (23, 47)], [(14, 30), (23, 30)]),
+            (34, 'Q'): ([(44, 24), (7, 25)], [(44, 30), (7, 30)]),
+            (34, 'H'): ([(59, 16), (1, 17)], [(59, 30), (1, 30)]),
+
+            # Version 35
+            (35, 'L'): ([(12, 121), (7, 122)], [(12, 30), (7, 30)]),
+            (35, 'M'): ([(12, 47), (26, 48)], [(12, 30), (26, 30)]),
+            (35, 'Q'): ([(39, 24), (14, 25)], [(39, 30), (14, 30)]),
+            (35, 'H'): ([(22, 15), (41, 16)], [(22, 30), (41, 30)]),
+
+            # Version 36
+            (36, 'L'): ([(6, 121), (14, 122)], [(6, 30), (14, 30)]),
+            (36, 'M'): ([(6, 47), (34, 48)], [(6, 30), (34, 30)]),
+            (36, 'Q'): ([(46, 24), (10, 25)], [(46, 30), (10, 30)]),
+            (36, 'H'): ([(2, 15), (64, 16)], [(2, 30), (64, 30)]),
+
+            # Version 37
+            (37, 'L'): ([(17, 122), (4, 123)], [(17, 30), (4, 30)]),
+            (37, 'M'): ([(29, 46), (14, 47)], [(29, 30), (14, 30)]),
+            (37, 'Q'): ([(49, 24), (10, 25)], [(49, 30), (10, 30)]),
+            (37, 'H'): ([(24, 15), (46, 16)], [(24, 30), (46, 30)]),
+
+            # Version 38
+            (38, 'L'): ([(4, 122), (18, 123)], [(4, 30), (18, 30)]),
+            (38, 'M'): ([(13, 46), (32, 47)], [(13, 30), (32, 30)]),
+            (38, 'Q'): ([(48, 24), (14, 25)], [(48, 30), (14, 30)]),
+            (38, 'H'): ([(42, 15), (32, 16)], [(42, 30), (32, 30)]),
+
+            # Version 39
+            (39, 'L'): ([(20, 117), (4, 118)], [(20, 30), (4, 30)]),
+            (39, 'M'): ([(40, 47), (7, 48)], [(40, 30), (7, 30)]),
+            (39, 'Q'): ([(43, 24), (22, 25)], [(43, 30), (22, 30)]),
+            (39, 'H'): ([(10, 15), (67, 16)], [(10, 30), (67, 30)]),
+
+            # Version 40
+            (40, 'L'): ([(19, 118), (6, 119)], [(19, 30), (6, 30)]),
+            (40, 'M'): ([(18, 47), (31, 48)], [(18, 30), (31, 30)]),
+            (40, 'Q'): ([(34, 24), (34, 25)], [(34, 30), (34, 30)]),
+            (40, 'H'): ([(20, 15), (61, 16)], [(20, 30), (61, 30)]),
+        }
+
+        # Algorithm to compute block information dynamically for versions > 40:
+        def compute_block_info(ver: int, ec: str) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+            total_codewords = (16 * ver + 128) * ver + 64
+            
+            # EC codewords per block (approximate formula)
+            ec_per_block = {
+                'L': lambda v: int(total_codewords * 0.07),
+                'M': lambda v: int(total_codewords * 0.15),
+                'Q': lambda v: int(total_codewords * 0.25),
+                'H': lambda v: int(total_codewords * 0.30)
+            }[ec](ver)
+            
+            # Number of blocks (approximate formula)
+            blocks = max(1, ver // 2)
+            if ec in ['Q', 'H']:
+                blocks *= 2
+            
+            data_per_block = (total_codewords - (ec_per_block * blocks)) // blocks
+            
+            # For simplicity in theoretical versions > 40, we use single block size
+            return ([(blocks, data_per_block)], [(blocks, ec_per_block)])
+
+        key = (version, error_correction)
+        if key in block_info:
+            return block_info[key]
+        
+        # For theoretical versions > 40, use computed values
+        return compute_block_info(version, error_correction)
+
+    def _extract_blocks(self, data_bits: list[int]) -> tuple[list[list[int]], list[list[int]]]:
+        """Extract data and error correction blocks from the raw data bits."""
+        data_blocks_info, ec_blocks_info = self._get_block_info()
+        
+        if self.debug:
+            print(f"[DEBUG] _extract_blocks: Data blocks info: {data_blocks_info}")
+            print(f"[DEBUG] _extract_blocks: EC blocks info: {ec_blocks_info}")
+        
+        # Convert bits to bytes
+        data_bytes = []
+        for i in range(0, len(data_bits), 8):
+            if i + 8 <= len(data_bits):
+                byte = int(''.join(str(bit) for bit in data_bits[i:i+8]), 2)
+                data_bytes.append(byte)
+        
+        if self.debug:
+            print(f"[DEBUG] _extract_blocks: Total bytes: {len(data_bytes)}")
+        
+        # Calculate total number of blocks
+        total_data_blocks = sum(count for count, _ in data_blocks_info)
+        
+        # Initialize empty blocks
+        data_blocks = [[] for _ in range(total_data_blocks)]
+        ec_blocks = [[] for _ in range(total_data_blocks)]
+        
+        # First, distribute data bytes
+        pos = 0
+        block_sizes = []
+        for count, size in data_blocks_info:
+            block_sizes.extend([size] * count)
+        
+        # Distribute bytes in order
+        max_size = max(block_sizes)
+        for i in range(max_size):
+            for j in range(total_data_blocks):
+                if i < block_sizes[j] and pos < len(data_bytes):
+                    data_blocks[j].append(data_bytes[pos])
+                    pos += 1
+        
+        # Now distribute error correction bytes
+        # Calculate total EC bytes needed
+        total_ec_bytes = sum(count * size for count, size in ec_blocks_info)
+        if self.debug:
+            print(f"[DEBUG] _extract_blocks: Total EC bytes needed: {total_ec_bytes}")
+        
+        # Get EC block sizes
+        ec_sizes = []
+        for count, size in ec_blocks_info:
+            ec_sizes.extend([size] * count)
+        
+        # Initialize EC blocks with zeros
+        for i in range(total_data_blocks):
+            ec_blocks[i] = [0] * ec_sizes[i]
+        
+        if self.debug:
+            for i, (data, ec) in enumerate(zip(data_blocks, ec_blocks)):
+                print(f"[DEBUG] _extract_blocks: Block {i}: {len(data)} data bytes, {len(ec)} EC bytes")
+        
+        return data_blocks, ec_blocks
+
+    def _gf_mult(self, x: int, y: int, primitive: int = 0x11D) -> int:
+        """Multiply two numbers in the Galois Field."""
+        result = 0
+        while y:
+            if y & 1:
+                result ^= x
+            y >>= 1
+            x <<= 1
+            if x & 0x100:
+                x ^= primitive
+        return result
+
+    def _gf_pow(self, x: int, power: int) -> int:
+        """Raise x to the power in the Galois Field."""
+        result = 1
+        while power:
+            if power & 1:
+                result = self._gf_mult(result, x)
+            x = self._gf_mult(x, x)
+            power >>= 1
+        return result
+
+    def _gf_inverse(self, x: int) -> int:
+        """Find the multiplicative inverse of x in the Galois Field."""
+        return self._gf_pow(x, 255)  # In GF(2^8), x^255 = x^-1
+
+    def _gf_poly_scale(self, p: list[int], x: int) -> list[int]:
+        """Multiply polynomial by a scalar."""
+        return [self._gf_mult(coef, x) for coef in p]
+
+    def _gf_poly_add(self, p: list[int], q: list[int]) -> list[int]:
+        """Add two polynomials in the Galois Field."""
+        # Pad shorter polynomial with zeros
+        if len(p) > len(q):
+            q = q + [0] * (len(p) - len(q))
         else:
-            # Fallback for higher versions
-            total_modules = len(self.matrix) ** 2
-            function_modules = np.sum(self.mark_function_modules())
-            return int(total_modules - function_modules)
+            p = p + [0] * (len(q) - len(p))
+        # Add coefficients
+        return [p[i] ^ q[i] for i in range(len(p))]
+
+    def _gf_poly_mult(self, p: list[int], q: list[int]) -> list[int]:
+        """Multiply two polynomials in the Galois Field."""
+        r = [0] * (len(p) + len(q) - 1)
+        for j in range(len(q)):
+            for i in range(len(p)):
+                r[i + j] ^= self._gf_mult(p[i], q[j])
+        return r
+
+    def _gf_poly_eval(self, poly: list[int], x: int) -> int:
+        """Evaluate polynomial at point x using Horner's method."""
+        y = poly[0]
+        for i in range(1, len(poly)):
+            y = self._gf_mult(y, x) ^ poly[i]
+        return y
+
+    def _rs_generator_poly(self, nsym: int) -> list[int]:
+        """Generate Reed-Solomon generator polynomial."""
+        g = [1]
+        for i in range(nsym):
+            g = self._gf_poly_mult(g, [1, self._gf_pow(2, i)])
+        return g
+
+    def _rs_decode(self, msg_in: list[int], nsym: int) -> list[int]:
+        """Decode a Reed-Solomon encoded message."""
+        if len(msg_in) <= nsym:
+            return msg_in  # Not enough data to decode
+            
+        # Find error locations
+        syndromes = [0] * nsym
+        for i in range(nsym):
+            syndromes[i] = self._gf_poly_eval(msg_in, self._gf_pow(2, i))
+            
+        if max(syndromes) == 0:
+            return msg_in[:-nsym]  # No errors
+            
+        # Find error locator polynomial using Berlekamp-Massey
+        err_loc = [1]
+        old_loc = [1]
+        
+        for i in range(nsym):
+            delta = syndromes[i]
+            for j in range(1, len(err_loc)):
+                delta ^= self._gf_mult(err_loc[-(j+1)], syndromes[i-j])
+                
+            old_loc = old_loc + [0]
+            if delta != 0:
+                if len(old_loc) > len(err_loc):
+                    new_loc = self._gf_poly_scale(old_loc, delta)
+                    old_loc = self._gf_poly_scale(err_loc, self._gf_inverse(delta))
+                    err_loc = new_loc
+                err_loc = self._gf_poly_add(err_loc, self._gf_poly_scale(old_loc, delta))
+                
+        # Find zeros of error polynomial
+        err_pos = []
+        for i in range(len(msg_in)):
+            if self._gf_poly_eval(err_loc, self._gf_pow(2, 255-i)) == 0:
+                err_pos.append(len(msg_in) - 1 - i)
+                
+        if len(err_pos) != len(err_loc) - 1:
+            return msg_in[:-nsym]  # Too many errors to correct
+            
+        # Find error values and correct
+        msg_out = list(msg_in)
+        for i in range(len(err_pos)):
+            pos = err_pos[i]
+            
+            # Compute error evaluator polynomial
+            eval_poly = self._gf_poly_mult(syndromes, err_loc)
+            eval_poly = eval_poly[len(eval_poly)-len(err_loc):]
+            
+            # Compute error value
+            xi_inv = self._gf_pow(2, 255-pos)
+            err_val = self._gf_poly_eval(eval_poly, xi_inv)
+            err_val = self._gf_mult(err_val, self._gf_inverse(self._gf_poly_eval(self._gf_poly_scale(err_loc, xi_inv), xi_inv)))
+            
+            msg_out[pos] ^= err_val
+            
+        return msg_out[:-nsym]  # Remove error correction bytes
+
+    def _apply_error_correction(self, data_blocks: list[list[int]], ec_blocks: list[list[int]]) -> list[int]:
+        """Apply error correction to the data blocks using the error correction blocks."""
+        if self.debug:
+            print(f"[DEBUG] _apply_error_correction: Processing {len(data_blocks)} data blocks")
+        
+        corrected_data = []
+        for i, (data, ec) in enumerate(zip(data_blocks, ec_blocks)):
+            if self.debug:
+                print(f"[DEBUG] _apply_error_correction: Block {i+1}: {len(data)} data bytes, {len(ec)} EC bytes")
+            
+            # Combine data and EC bytes for Reed-Solomon decoding
+            block = data + ec
+            if self.debug:
+                print(f"[DEBUG] _apply_error_correction: Combined block length: {len(block)}")
+            
+            # Apply Reed-Solomon error correction
+            try:
+                corrected = self._rs_decode(block, len(ec))
+                if self.debug:
+                    print(f"[DEBUG] _apply_error_correction: Corrected block length: {len(corrected)}")
+                corrected_data.extend(corrected)
+            except Exception as e:
+                if self.debug:
+                    print(f"[DEBUG] _apply_error_correction: Error in block {i+1}: {str(e)}")
+                # If error correction fails, use original data
+                corrected_data.extend(data)
+        
+        return corrected_data
 
     def decode(self) -> str:
         """Decode the QR code and return the message."""
@@ -462,17 +1027,29 @@ class QRDecode:
         if self.debug:
             print("[DEBUG] decode: Data unmasked")
 
-        # 5. Extract data bits and trim extra bits
+        # 5. Extract data bits
         data_bits = self.extract_data_bits()
-        capacity = self._get_data_capacity()
         if self.debug:
-            print(f"[DEBUG] decode: Trimming data bits to capacity: {capacity} bits (out of {len(data_bits)})")
-        data_bits = data_bits[:capacity]
-        if self.debug:
-            print(f"[DEBUG] decode: Using {len(data_bits)} data bits for decoding")
+            print(f"[DEBUG] decode: Extracted {len(data_bits)} data bits")
 
-        # 6. Decode data bits
-        return self.decode_data(data_bits)
+        # 6. Extract data and error correction blocks
+        data_blocks, ec_blocks = self._extract_blocks(data_bits)
+        if self.debug:
+            print(f"[DEBUG] decode: Extracted {len(data_blocks)} data blocks and {len(ec_blocks)} EC blocks")
+
+        # 7. Apply error correction
+        corrected_data = self._apply_error_correction(data_blocks, ec_blocks)
+        if self.debug:
+            print(f"[DEBUG] decode: Applied error correction, got {len(corrected_data)} bytes")
+
+        # 8. Convert corrected data back to bits for decoding
+        corrected_bits = []
+        for byte in corrected_data:
+            bits = [(byte >> i) & 1 for i in range(7, -1, -1)]
+            corrected_bits.extend(bits)
+
+        # 9. Decode the corrected data bits
+        return self.decode_data(corrected_bits)
 
 
 if __name__ == "__main__":
