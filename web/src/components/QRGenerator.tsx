@@ -144,7 +144,7 @@ export function QRGenerator() {
                   className="w-full p-3 bg-gray-50 border border-gray-300 rounded-lg text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value={-1}>Auto</option>
-                  {Array.from({ length: 10 }, (_, i) => i + 1).map((v) => (
+                  {Array.from({ length: 40 }, (_, i) => i + 1).map((v) => (
                     <option key={v} value={v}>{v}</option>
                   ))}
                 </select>
