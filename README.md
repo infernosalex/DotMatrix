@@ -2,6 +2,8 @@
 
 DotMatrix is a full-stack web application for QR code generation and decoding, developed as a university project. The application provides a modern, user-friendly interface for creating and reading QR codes with various customization options.
 
+A live instance is available at https://dotmatrix.byte.mom
+
 ## 🚀 Features
 
 - QR Code Generation with customizable options
@@ -10,6 +12,22 @@ DotMatrix is a full-stack web application for QR code generation and decoding, d
 - RESTful API backend
 - Docker support for easy deployment
 - Cross-platform desktop application (Windows, macOS, Linux)
+
+### QR Code Processing Implementation
+
+Our QR code implementation includes comprehensive support for both encoding and decoding:
+
+**QR Code Encoding:**
+- Automatic version selection and error correction level configuration (L, M, Q, H).
+- Optimized segmentation that dynamically chooses the most efficient encoding mode (Numeric, Alphanumeric, Byte, and Kanji).
+- Detailed generation of functional patterns including finder, timing, and alignment patterns, as well as the dark module.
+- Interleaving of data and error correction codewords, integrated with a Reed-Solomon algorithm for robust error correction.
+
+**QR Code Decoding:**
+- Validation and parsing of QR code matrices to extract version and format information.
+- Systematic unmasking of the data to recover the original bits.
+- Extraction of data bits using the standard zigzag pattern.
+- Application of Reed-Solomon error correction to reliably recover and decode the encoded message.
 
 ## 🛠️ Technology Stack
 
