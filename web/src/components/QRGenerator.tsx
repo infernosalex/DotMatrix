@@ -81,6 +81,36 @@ export function QRGenerator() {
     }
   };
 
+  const exportQRCodeImage = () => {
+    if (!qrData) return;
+    const finalStage = qrData.intermediate_stages.final;
+    const size = finalStage.modules.length;
+    const scale = 10;
+    const padding = 3; // Add padding
+    const canvas = document.createElement('canvas');
+    canvas.width = (size + 2 * padding) * scale; // Adjust width for padding
+    canvas.height = (size + 2 * padding) * scale; // Adjust height for padding
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Fill the background with white
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        const cellValue = finalStage.modules[i][j];
+        ctx.fillStyle = cellValue ? '#000' : '#fff';
+        ctx.fillRect((j + padding) * scale, (i + padding) * scale, scale, scale); // Adjust position for padding
+      }
+    }
+    const dataURL = canvas.toDataURL('image/png');
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = 'qr-code.png';
+    link.click();
+  };
+
   const currentMatrix = getMatrixForStage(currentStage);
 
   return (
@@ -225,6 +255,11 @@ export function QRGenerator() {
               }
               return null;
             })()}
+            {currentStage === stages.length - 1 && (
+              <PrimaryButton className="mt-4" onClick={exportQRCodeImage}>
+                Export as Image
+              </PrimaryButton>
+            )}
           </div>
         </div>
       )}
