@@ -154,62 +154,57 @@ def generate_qr():
 
 # Subclass to capture intermediate stages during QR code decoding
 class DebugQRDecode(QRDecode):
-    def __init__(self, qr_code: np.ndarray, debug: bool = True, verbose: bool = False):
+    def __init__(self, qr_code, debug=False, verbose=False):
         super().__init__(qr_code, debug=debug, verbose=verbose)
         self.intermediate = {}
-        # Record the initial state of the matrix
-        self.intermediate['initial_matrix'] = self.matrix.tolist()
 
     def decode(self) -> str:
-        # Step 1: Get version
+        # Capture initial matrix state
+        self.intermediate["initial_matrix"] = self.matrix.tolist()
+        
+        # Step 1: Determine the version of the QR code
         version = self.get_version()
-        self.intermediate['version'] = version
-        if self.debug:
-            print(f"[DEBUG DebugQRDecode] QR code version = {version}")
-
-        # Step 2: Extract format information
+        self.intermediate["version"] = version
+        
+        # Step 2: Extract format information (error correction level and mask pattern)
         error_correction, mask_pattern = self.extract_format_information()
-        self.intermediate['format_information'] = {
-            "error_correction": error_correction,
-            "mask_pattern": mask_pattern
-        }
-        if self.debug:
-            print(f"[DEBUG DebugQRDecode] Error correction level = {error_correction}, Mask pattern = {mask_pattern}")
-
-        # Step 3: Extract version information for versions >= 7
+        self.intermediate["format_information"] = {"error_correction": error_correction, "mask_pattern": mask_pattern}
+        
+        # Step 3: Extract version information for QR versions >= 7
         if version >= 7:
-            version_info = self.extract_version_information()
-            self.intermediate['version_information'] = version_info
-            if self.debug:
-                print(f"[DEBUG DebugQRDecode] Version information = {version_info}")
-
-        # Step 4: Unmask data
+            ver_info = self.extract_version_information()
+            self.intermediate["version_information"] = ver_info
+        else:
+            self.intermediate["version_information"] = None
+        
+        # Step 4: Unmask the QR code data
         self.unmask_data(mask_pattern)
-        self.intermediate['unmasked_matrix'] = self.matrix.tolist()
-        if self.debug:
-            print("[DEBUG DebugQRDecode] Data unmasked")
-
-        # Step 5: Extract data bits and trim to capacity
+        self.intermediate["unmasked_matrix"] = self.matrix.tolist()
+        
+        # Step 5: Extract data bits from the QR code
         data_bits = self.extract_data_bits()
-        data_bits_string = ''.join(str(bit) for bit in data_bits)
-        self.intermediate['data_bits_extracted'] = data_bits_string
-        capacity = self._get_data_capacity()
-        self.intermediate['data_capacity'] = capacity
-        if self.debug:
-            print(f"[DEBUG DebugQRDecode] Trimming data bits to capacity: {capacity} bits (out of {len(data_bits)})")
-        data_bits_trimmed = data_bits[:capacity]
-        data_bits_trimmed_string = ''.join(str(bit) for bit in data_bits_trimmed)
-        self.intermediate['data_bits_trimmed'] = data_bits_trimmed_string
-        if self.debug:
-            print(f"[DEBUG DebugQRDecode] Using {len(data_bits_trimmed)} data bits for decoding")
-
-        # Step 6: Decode data bits
-        decoded_text = self.decode_data(data_bits_trimmed)
-        self.intermediate['decoded_text'] = decoded_text
-        if self.debug:
-            print(f"[DEBUG DebugQRDecode] Final decoded message = {decoded_text}")
+        self.intermediate["data_bits_extracted"] = data_bits
+        
+        # Step 6: Record data capacity (if available)
+        capacity = self._get_data_capacity() if hasattr(self, "_get_data_capacity") else len(data_bits)
+        self.intermediate["data_capacity"] = capacity
+        
+        # Step 7: Apply error correction by extracting and correcting data blocks
+        data_blocks, ec_blocks = self._extract_blocks(data_bits)
+        corrected_data = self._apply_error_correction(data_blocks, ec_blocks)
+        
+        # Convert corrected data bytes back into a bit stream
+        corrected_bits = []
+        for byte in corrected_data:
+            bits = [(byte >> i) & 1 for i in range(7, -1, -1)]
+            corrected_bits.extend(bits)
+        self.intermediate["data_bits_trimmed"] = corrected_bits
+        
+        # Step 8: Decode the final message from the corrected bit stream
+        decoded_text = self.decode_data(corrected_bits)
+        self.intermediate["decoded_text"] = decoded_text
+        
         return decoded_text
-
 
 # Update the decode_qr endpoint to use DebugQRDecode
 @app.route('/api/decode', methods=['POST'])
